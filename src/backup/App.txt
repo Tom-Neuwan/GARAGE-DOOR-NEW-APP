@@ -1,0 +1,470 @@
+import React, { useState, useEffect, useRef } from 'react';
+import * as THREE from 'three';
+
+// --- DATA CONSTANTS ---
+const PANEL_HEIGHT_INCHES = 21;
+const DOOR_STYLES = ['Carriage House', 'Raised Panel', 'Modern Steel', 'Flush'];
+const DOOR_COLORS = [
+  { name: 'White', value: '#F5F5F5' },
+  { name: 'Almond', value: '#F0EAD6' },
+  { name: 'Sandstone', value: '#D8CDBA' },
+  { name: 'Wood Grain', value: '#8B4513' },
+  { name: 'Charcoal', value: '#36454F' },
+  { name: 'Black', value: '#222222' }
+];
+const WINDOW_STYLES = ['None', 'Top Row (4)', 'Top Row (8)', 'Side Verticals'];
+const HARDWARE_STYLES = ['None', 'Handles & Hinges'];
+
+// --- TEXTURE FACTORY ---
+const TextureFactory = {
+    createWoodTexture: (color = '#8b5a2b', width = 1024, height = 1024) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        const baseColor = new THREE.Color(color);
+        ctx.fillStyle = baseColor.getStyle();
+        ctx.fillRect(0, 0, width, height);
+
+        for (let i = 0; i < 400; i++) {
+            const darkerColor = baseColor.clone().multiplyScalar(0.85 + Math.random() * 0.1);
+            ctx.strokeStyle = `rgba(${darkerColor.r * 255}, ${darkerColor.g * 255}, ${darkerColor.b * 255}, ${Math.random() * 0.15})`;
+            ctx.beginPath();
+            const x = (Math.random() - 0.5) * width * 0.3;
+            const y = i * (height / 400) + (Math.random() - 0.5) * 10;
+            ctx.moveTo(x, y);
+            ctx.bezierCurveTo(x + width * 0.4, y, x + width * 0.6, y, x + width * 1.3, y);
+            ctx.lineWidth = Math.random() * 2.5 + 1;
+            ctx.stroke();
+        }
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        return texture;
+    }
+};
+
+// --- SIMPLE ORBIT CONTROLS (Improved) ---
+class SimpleOrbitControls {
+    constructor(camera, domElement) {
+        this.camera = camera;
+        this.domElement = domElement;
+        this.target = new THREE.Vector3(0, 4, 0);
+        
+        this.spherical = new THREE.Spherical(25);
+        this.spherical.setFromVector3(camera.position.clone().sub(this.target));
+        
+        this.isMouseDown = false;
+        this.lon = 0;
+        this.lat = 0;
+        
+        this.previousMouseX = 0;
+        this.previousMouseY = 0;
+
+        this.enabled = false;
+        
+        this.onMouseDown = this.onMouseDown.bind(this);
+        this.onMouseMove = this.onMouseMove.bind(this);
+        this.onMouseUp = this.onMouseUp.bind(this);
+        this.onMouseWheel = this.onMouseWheel.bind(this);
+
+        this.domElement.addEventListener('mousedown', this.onMouseDown);
+        this.domElement.addEventListener('mousemove', this.onMouseMove);
+        this.domElement.addEventListener('mouseup', this.onMouseUp);
+        this.domElement.addEventListener('wheel', this.onMouseWheel);
+    }
+    
+    onMouseDown(event) {
+        if (!this.enabled) return;
+        event.preventDefault();
+        this.isMouseDown = true;
+        this.previousMouseX = event.clientX;
+        this.previousMouseY = event.clientY;
+    }
+    
+    onMouseMove(event) {
+        if (!this.enabled || !this.isMouseDown) return;
+        
+        const deltaX = event.clientX - this.previousMouseX;
+        const deltaY = event.clientY - this.previousMouseY;
+
+        const sensitivity = 0.4;
+        this.lon -= deltaX * sensitivity;
+        this.lat -= deltaY * sensitivity;
+        
+        this.previousMouseX = event.clientX;
+        this.previousMouseY = event.clientY;
+    }
+    
+    onMouseUp() {
+        this.isMouseDown = false;
+    }
+    
+    onMouseWheel(event) {
+        if (!this.enabled) return;
+        event.preventDefault();
+        const delta = event.deltaY * 0.02;
+        this.spherical.radius = Math.max(10, Math.min(50, this.spherical.radius + delta));
+    }
+    
+    update() {
+        this.lat = Math.max(-85, Math.min(85, this.lat));
+        const targetPhi = THREE.MathUtils.degToRad(90 - this.lat);
+        const targetTheta = THREE.MathUtils.degToRad(this.lon);
+        
+        const dampingFactor = 0.1;
+        this.spherical.phi += (targetPhi - this.spherical.phi) * dampingFactor;
+        this.spherical.theta += (targetTheta - this.spherical.theta) * dampingFactor;
+        
+        const offset = new THREE.Vector3();
+        offset.setFromSpherical(this.spherical);
+        
+        this.camera.position.copy(this.target).add(offset);
+        this.camera.lookAt(this.target);
+    }
+    
+    dispose() {
+        this.domElement.removeEventListener('mousedown', this.onMouseDown);
+        this.domElement.removeEventListener('mousemove', this.onMouseMove);
+        this.domElement.removeEventListener('mouseup', this.onMouseUp);
+        this.domElement.removeEventListener('wheel', this.onMouseWheel);
+    }
+}
+
+// --- 3D VISUALIZATION COMPONENT ---
+function ThreeVisualization({ config, is3D }) {
+    const mountRef = useRef(null);
+    const sceneRef = useRef(null);
+    const rendererRef = useRef(null);
+    const cameraRef = useRef(null);
+    const doorGroupRef = useRef(null);
+    const controlsRef = useRef(null);
+    const animationIdRef = useRef(null);
+
+    // Initialize Scene
+    useEffect(() => {
+        const currentMount = mountRef.current;
+        if (!currentMount) return;
+        
+        const { clientWidth: width, clientHeight: height } = currentMount;
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xdde2e7);
+        scene.fog = new THREE.Fog(0xdde2e7, 20, 50);
+        sceneRef.current = scene;
+
+        const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+        camera.position.set(0, 5, 25); // Default zoom out
+        cameraRef.current = camera;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        currentMount.appendChild(renderer.domElement);
+        rendererRef.current = renderer;
+
+        const controls = new SimpleOrbitControls(camera, renderer.domElement);
+        controlsRef.current = controls;
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
+        hemiLight.position.set(0, 20, 0);
+        scene.add(hemiLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        dirLight.position.set(-15, 20, 15);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        scene.add(dirLight);
+
+        const ground = new THREE.Mesh(
+            new THREE.PlaneGeometry(100, 100),
+            new THREE.ShadowMaterial({ opacity: 0.25 })
+        );
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const doorGroup = new THREE.Group();
+        scene.add(doorGroup);
+        doorGroupRef.current = doorGroup;
+
+        const animate = () => {
+            animationIdRef.current = requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        };
+        animate();
+
+        const handleResize = () => {
+            if (!mountRef.current) return;
+            const { clientWidth, clientHeight } = mountRef.current;
+            renderer.setSize(clientWidth, clientHeight);
+            camera.aspect = clientWidth / clientHeight;
+            camera.updateProjectionMatrix();
+        };
+        window.addEventListener('resize', handleResize);
+
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            if (animationIdRef.current) cancelAnimationFrame(animationIdRef.current);
+            if (controlsRef.current) controlsRef.current.dispose();
+            if (currentMount && renderer.domElement) currentMount.removeChild(renderer.domElement);
+            renderer.dispose();
+        };
+    }, []);
+
+    // Update Door and Controls
+    useEffect(() => {
+        const doorGroup = doorGroupRef.current;
+        const controls = controlsRef.current;
+        const camera = cameraRef.current;
+        if (!doorGroup || !controls || !camera) return;
+        
+        controls.enabled = is3D;
+        if (!is3D) {
+            controls.lon = 0;
+            controls.lat = 0;
+            controls.spherical.theta = 0;
+            controls.spherical.phi = Math.PI / 2;
+        }
+
+        while (doorGroup.children.length > 0) {
+            const obj = doorGroup.children[0];
+            doorGroup.remove(obj);
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+                if (Array.isArray(obj.material)) {
+                    obj.material.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); });
+                } else {
+                    if (obj.material.map) obj.material.map.dispose();
+                    obj.material.dispose();
+                }
+            }
+        }
+
+        const { width, height, style, colorIndex, windowStyle, hardwareStyle } = config;
+        const doorWidth = width / 12;
+        const doorHeight = height / 12;
+        const panelCount = Math.round(height / PANEL_HEIGHT_INCHES);
+        const panelH = doorHeight / panelCount;
+
+        const targetY = doorHeight / 2;
+        doorGroup.position.y = targetY;
+        controls.target.set(0, targetY, 0);
+
+        const doorColor = DOOR_COLORS[colorIndex].value;
+        const isWood = DOOR_COLORS[colorIndex].name === 'Wood Grain';
+        const baseMaterial = new THREE.MeshStandardMaterial({
+            color: isWood ? 0xffffff : doorColor,
+            map: isWood ? TextureFactory.createWoodTexture(doorColor) : null,
+            roughness: isWood ? 0.8 : 0.6,
+            metalness: isWood ? 0.0 : 0.2,
+        });
+
+        const windowMaterial = new THREE.MeshStandardMaterial({
+            color: 0x222222,
+            roughness: 0.1,
+            metalness: 0.8,
+            transparent: true,
+            opacity: 0.8
+        });
+
+        for (let i = 0; i < panelCount; i++) {
+            const y = (i - (panelCount - 1) / 2) * panelH;
+            const panelGeometry = new THREE.BoxGeometry(doorWidth, panelH * 0.98, 0.2);
+            const panelMesh = new THREE.Mesh(panelGeometry, baseMaterial);
+            panelMesh.position.set(0, y, 0);
+            panelMesh.castShadow = true;
+            panelMesh.receiveShadow = true;
+            doorGroup.add(panelMesh);
+
+            if (style === 'Raised Panel') {
+                const center = new THREE.Mesh(new THREE.BoxGeometry(doorWidth - 0.6, panelH - 0.6, 0.1), baseMaterial);
+                center.position.set(0, y, 0.15);
+                doorGroup.add(center);
+            }
+            
+            if (style === 'Carriage House' || style === 'Modern Steel') {
+                const overlayMat = baseMaterial.clone();
+                overlayMat.color.multiplyScalar(isWood ? 0.85 : 1);
+                const railH = style === 'Modern Steel' ? 0.05 : 0.3;
+                const stileW = style === 'Modern Steel' ? doorWidth : 0.3;
+                const topRail = new THREE.Mesh(new THREE.BoxGeometry(stileW, railH, 0.1), overlayMat);
+                topRail.position.set(0, y + panelH/2 - railH/2, 0.15);
+                doorGroup.add(topRail);
+                const bottomRail = new THREE.Mesh(new THREE.BoxGeometry(stileW, railH, 0.1), overlayMat);
+                bottomRail.position.set(0, y - panelH/2 + railH/2, 0.15);
+                doorGroup.add(bottomRail);
+                if (style === 'Carriage House') {
+                    const leftStile = new THREE.Mesh(new THREE.BoxGeometry(stileW, panelH, 0.1), overlayMat);
+                    leftStile.position.set(-doorWidth/2 + stileW/2, y, 0.15);
+                    doorGroup.add(leftStile);
+                    const rightStile = new THREE.Mesh(new THREE.BoxGeometry(stileW, panelH, 0.1), overlayMat);
+                    rightStile.position.set(doorWidth/2 - stileW/2, y, 0.15);
+                    doorGroup.add(rightStile);
+                }
+            }
+            
+            if (i < panelCount - 1) {
+                const lineGeo = new THREE.BoxGeometry(doorWidth, 0.02, 0.21);
+                const lineMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
+                const line = new THREE.Mesh(lineGeo, lineMat);
+                line.position.set(0, y + panelH / 2, 0);
+                doorGroup.add(line);
+            }
+
+            if (windowStyle !== 'None') {
+                const hasWindows = (windowStyle.includes('Top Row') && i === panelCount - 1) || (windowStyle === 'Side Verticals');
+                if (hasWindows) {
+                    const numWindows = windowStyle === 'Top Row (8)' ? 8 : 4;
+                    const windowW = doorWidth / (numWindows * 1.5);
+                    const windowH = panelH * 0.6;
+                    for (let j = 0; j < numWindows; j++) {
+                        if (windowStyle === 'Side Verticals' && (j > 0 && j < numWindows - 1)) continue;
+                        const spacing = doorWidth / numWindows;
+                        const winX = (j - (numWindows - 1) / 2) * spacing;
+                        const glass = new THREE.Mesh(new THREE.BoxGeometry(windowW - 0.05, windowH - 0.05, 0.05), windowMaterial);
+                        glass.position.set(winX, y, 0.2);
+                        doorGroup.add(glass);
+                    }
+                }
+            }
+        }
+        
+        if (hardwareStyle === 'Handles & Hinges' && style === 'Carriage House') {
+            const hardwareMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4, metalness: 0.8 });
+            for (let i = 0; i < panelCount; i += Math.max(1, panelCount - 1)) {
+                const y = (i - (panelCount - 1) / 2) * panelH;
+                const hinge = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.5, 0.05), hardwareMat);
+                hinge.position.set(-doorWidth/2 - 0.15, y, 0.2);
+                const hinge2 = hinge.clone();
+                hinge2.position.x = doorWidth/2 + 0.15;
+                doorGroup.add(hinge, hinge2);
+            }
+            const handle = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.05, 16, 100), hardwareMat);
+            handle.position.set(0, 0, 0.25);
+            doorGroup.add(handle);
+        }
+
+    }, [config, is3D]);
+
+    const handleZoom = (delta) => {
+        if (controlsRef.current) {
+            controlsRef.current.spherical.radius = Math.max(10, Math.min(50, controlsRef.current.spherical.radius + delta));
+        }
+    };
+
+    return (
+        <div className="w-full h-full relative">
+            <div ref={mountRef} className="w-full h-full" />
+            <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
+                <button onClick={() => handleZoom(2)} className="w-10 h-10 bg-white/70 rounded-full text-2xl font-bold flex items-center justify-center shadow-md hover:bg-white transition-colors">-</button>
+                <button onClick={() => handleZoom(-2)} className="w-10 h-10 bg-white/70 rounded-full text-2xl font-bold flex items-center justify-center shadow-md hover:bg-white transition-colors">+</button>
+            </div>
+        </div>
+    );
+}
+
+// --- MAIN APP COMPONENT ---
+export default function GarageDoorConfigurator() {
+    const [config, setConfig] = useState({
+        width: 192, height: 84, style: 'Carriage House', colorIndex: 3, windowStyle: 'Top Row (4)', hardwareStyle: 'Handles & Hinges'
+    });
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isMobile, setIsMobile] = useState(false);
+    const [is3D, setIs3D] = useState(false); // Start in 2D view
+
+    useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
+    const updateConfig = (key, value) => {
+        setConfig(prev => ({ ...prev, [key]: value }));
+    };
+
+    const QuoteModal = () => (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl p-8 max-w-lg w-full m-4">
+                <h2 className="text-2xl font-bold mb-4">Your Custom Door Quote</h2>
+                <p className="mb-6 text-gray-600">Here is a summary of your design. Please provide your contact information to receive a detailed quote.</p>
+                <div className="bg-gray-50 p-4 rounded mb-6 space-y-2">
+                    <div className="flex justify-between"><strong>Style:</strong><span>{config.style}</span></div>
+                    <div className="flex justify-between"><strong>Size:</strong><span>{config.width/12}' x {config.height/12}'</span></div>
+                    <div className="flex justify-between"><strong>Color:</strong><span>{DOOR_COLORS[config.colorIndex].name}</span></div>
+                    <div className="flex justify-between"><strong>Windows:</strong><span>{config.windowStyle}</span></div>
+                    <div className="flex justify-between"><strong>Hardware:</strong><span>{config.hardwareStyle}</span></div>
+                </div>
+                <input type="email" placeholder="Enter your email" className="w-full p-2 border rounded mb-4"/>
+                <div className="flex justify-end gap-4">
+                    <button onClick={() => setIsModalOpen(false)} className="px-6 py-2 rounded text-gray-700 bg-gray-200 hover:bg-gray-300">Cancel</button>
+                    <button onClick={() => { alert('Thank you! A quote will be sent to your email.'); setIsModalOpen(false); }} className="px-6 py-2 rounded text-white bg-blue-600 hover:bg-blue-700">Submit</button>
+                </div>
+            </div>
+        </div>
+    );
+
+    return (
+        <div className={`h-screen bg-gray-100 flex ${isMobile ? 'flex-col' : 'flex-row'} font-sans overflow-hidden`}>
+            {isModalOpen && <QuoteModal />}
+            <div className={`flex-1 relative bg-gray-800 ${isMobile ? 'h-1/2' : 'min-h-0'}`}>
+                <ThreeVisualization config={config} is3D={is3D} />
+                 <div className="absolute top-4 left-4 z-10">
+                    <button onClick={() => setIs3D(!is3D)} className="px-4 py-2 bg-white/70 rounded-md text-lg font-bold flex items-center justify-center shadow-md hover:bg-white transition-colors">
+                        {is3D ? '2D View' : '3D View'}
+                    </button>
+                </div>
+            </div>
+            <div className={`${isMobile ? 'w-full h-1/2' : 'w-96'} flex-shrink-0 bg-white shadow-lg p-6 overflow-y-auto`}>
+                <h1 className="text-2xl font-bold text-gray-800 border-b pb-4 mb-6">Door Designer</h1>
+                <div className="space-y-6">
+                    <div>
+                        <h2 className="text-lg font-semibold text-gray-700 mb-4">1. Dimensions</h2>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="flex justify-between text-sm font-medium mb-2">Width: <span className="font-bold text-gray-900">{(config.width / 12)}'</span></label>
+                                <input type="range" min="96" max="216" step="12" value={config.width} onChange={e => updateConfig('width', parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
+                            </div>
+                            <div>
+                                <label className="flex justify-between text-sm font-medium mb-2">Height: <span className="font-bold text-gray-900">{(config.height / 12)}'</span></label>
+                                <input type="range" min="84" max="120" step="12" value={config.height} onChange={e => updateConfig('height', parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-lg font-semibold text-gray-700 mb-2">2. Style</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            {DOOR_STYLES.map(s => <button key={s} onClick={() => updateConfig('style', s)} className={`p-3 rounded-md text-sm font-semibold transition-colors ${config.style === s ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>{s}</button>)}
+                        </div>
+                    </div>
+                    <div>
+                        <h2 className="text-lg font-semibold text-gray-700 mb-2">3. Color</h2>
+                        <div className="grid grid-cols-6 gap-2">
+                            {DOOR_COLORS.map((c, i) => <div key={c.name} onClick={() => updateConfig('colorIndex', i)} className={`h-12 rounded-md cursor-pointer border-2 transition-all ${config.colorIndex === i ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-200'}`} style={{ backgroundColor: c.value }} title={c.name} />)}
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-lg font-semibold text-gray-700 mb-2">4. Windows</label>
+                        <select value={config.windowStyle} onChange={e => updateConfig('windowStyle', e.target.value)} className="w-full p-2 border rounded-md bg-gray-50">
+                            {WINDOW_STYLES.map(w => <option key={w} value={w}>{w}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-lg font-semibold text-gray-700 mb-2">5. Hardware</label>
+                        <select value={config.hardwareStyle} onChange={e => updateConfig('hardwareStyle', e.target.value)} className="w-full p-2 border rounded-md bg-gray-50" disabled={config.style !== 'Carriage House'}>
+                            {HARDWARE_STYLES.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                    </div>
+                    <div className="pt-6 border-t">
+                        <button onClick={() => setIsModalOpen(true)} className="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-700 transition-transform transform hover:scale-105">Get a Quote</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
