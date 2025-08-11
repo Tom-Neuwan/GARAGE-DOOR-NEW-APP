@@ -1,0 +1,361 @@
+// src/components/ThreeVisualization.jsx
+import React, { useEffect, useRef } from 'react';
+import * as THREE from 'three';
+import SimpleOrbitControls from '../controls/SimpleOrbitControls';
+
+/* --------------------------- camera util --------------------------- */
+const fitCameraToObjects = (camera, controls, objects, fitOffset = 1.25) => {
+  if (!camera || !controls || !objects || !objects.length) return;
+  const box = new THREE.Box3();
+  objects.forEach(o => box.expandByObject(o));
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxSize = Math.max(size.x, size.y, size.z);
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+  const dist = (maxSize / 2) / Math.tan(fov / 2);
+  const newDist = Math.max(dist * fitOffset, 0.1);
+
+  controls.target.copy(center);
+  camera.position.copy(center.clone().add(new THREE.Vector3(0, 0, newDist)));
+  camera.near = newDist / 100;
+  camera.far = newDist * 100;
+  camera.updateProjectionMatrix();
+
+  controls.minDistance = newDist / 4;
+  controls.maxDistance = newDist * 4;
+  controls.update();
+};
+
+/* -------------------- rounded rectangle Shape helper -------------------- */
+function roundedRectShape(w, h, r) {
+  const s = new THREE.Shape();
+  const hw = w / 2, hh = h / 2;
+  const rr = Math.max(0, Math.min(r, hw * 0.95, hh * 0.95));
+  s.moveTo(-hw + rr, -hh);
+  s.lineTo( hw - rr, -hh);
+  s.quadraticCurveTo( hw, -hh,  hw, -hh + rr);
+  s.lineTo( hw,  hh - rr);
+  s.quadraticCurveTo( hw,  hh,  hw - rr,  hh);
+  s.lineTo(-hw + rr,  hh);
+  s.quadraticCurveTo(-hw,  hh, -hw,  hh - rr);
+  s.lineTo(-hw, -hh + rr);
+  s.quadraticCurveTo(-hw, -hh, -hw + rr, -hh);
+  return s;
+}
+
+/* -------------- one carved + beveled "raised panel" profile -------------- */
+/* IMPORTANT: we translate each extrude geometry backwards by its own depth,
+   then place it at the door's FRONT Z, so it is recessed (carved) not added. */
+function carveRaisedProfile(group, cx, cy, cellW, cellH, frontZ, opts) {
+  const {
+    // tune these to taste:
+    shoulderWidth = 0.12,       // outer shallow ring width
+    shoulderDepth = 0.020,      // shallow recess depth
+    grooveWidth   = 0.12,       // beveled band width
+    grooveDepth   = 0.090,      // deeper recess depth
+    innerInset    = 0.12,       // offset from groove inner edge to inner flat
+    innerDepth    = 0.105,      // deepest flat
+    roundness     = 0.035,
+    grooveBevel   = { thickness: 0.045, size: 0.055, segments: 4 },
+    shoulderMat, grooveMat, innerMat
+  } = opts;
+
+  const EPS = 0.0002;
+  const panelW = cellW * 0.80;
+  const panelH = cellH * 0.60;
+
+  // --- Shoulder ring (recessed shallow) ---
+  const shOuter = roundedRectShape(panelW, panelH, roundness);
+  const shInner = roundedRectShape(
+    panelW - 2 * shoulderWidth,
+    panelH - 2 * shoulderWidth,
+    Math.max(0, roundness - 0.02)
+  );
+  shOuter.holes.push(shInner);
+
+  const shoulderGeo = new THREE.ExtrudeGeometry(shOuter, {
+    depth: shoulderDepth,
+    bevelEnabled: false
+  });
+  shoulderGeo.translate(0, 0, -shoulderDepth);      // carve backward
+  // aoMap needs uv2
+  shoulderGeo.setAttribute('uv2',
+    new THREE.BufferAttribute(shoulderGeo.attributes.uv.array, 2)
+  );
+
+  const shoulder = new THREE.Mesh(shoulderGeo, shoulderMat);
+  shoulder.position.set(cx, cy, frontZ - EPS);
+  shoulder.castShadow = shoulder.receiveShadow = true;
+  group.add(shoulder);
+
+  // --- Beveled groove (deeper) ---
+  const gOuterW = panelW - 2 * shoulderWidth;
+  const gOuterH = panelH - 2 * shoulderWidth;
+  const gInnerW = gOuterW - 2 * grooveWidth;
+  const gInnerH = gOuterH - 2 * grooveWidth;
+
+  if (gInnerW > 0.05 && gInnerH > 0.05) {
+    const gOuter = roundedRectShape(gOuterW, gOuterH, Math.max(0, roundness - 0.02));
+    const gInner = roundedRectShape(gInnerW, gInnerH, Math.max(0, roundness - 0.04));
+    gOuter.holes.push(gInner);
+
+    const grooveGeo = new THREE.ExtrudeGeometry(gOuter, {
+      depth: grooveDepth,
+      bevelEnabled: true,
+      bevelThickness: grooveBevel.thickness,
+      bevelSize:     grooveBevel.size,
+      bevelSegments: grooveBevel.segments
+    });
+    grooveGeo.translate(0, 0, -grooveDepth);        // carve backward
+    grooveGeo.setAttribute('uv2',
+      new THREE.BufferAttribute(grooveGeo.attributes.uv.array, 2)
+    );
+
+    const groove = new THREE.Mesh(grooveGeo, grooveMat);
+    groove.position.set(cx, cy, frontZ - EPS);
+    groove.castShadow = groove.receiveShadow = true;
+    group.add(groove);
+  }
+
+  // --- Inner flat (deepest) ---
+  const flatW = gInnerW - 2 * innerInset;
+  const flatH = gInnerH - 2 * innerInset;
+  if (flatW > 0.05 && flatH > 0.05) {
+    const t = 0.004;
+    const inner = new THREE.Mesh(new THREE.BoxGeometry(flatW, flatH, t), innerMat);
+    inner.geometry.setAttribute('uv2',
+      new THREE.BufferAttribute(inner.geometry.attributes.uv.array, 2)
+    );
+    inner.position.set(cx, cy, (frontZ - innerDepth) - t / 2);
+    inner.castShadow = inner.receiveShadow = true;
+    group.add(inner);
+  }
+}
+
+/* ------------------------------ component ------------------------------ */
+export default function ThreeVisualization({ config, is3D }) {
+  const mountRef = useRef(null);
+  const sceneRef = useRef(null);
+  const rendererRef = useRef(null);
+  const cameraRef = useRef(null);
+  const doorGroupRef = useRef(null);
+  const controlsRef = useRef(null);
+  const animationIdRef = useRef(null);
+
+  // texture cache
+  const tex = useRef(null);
+  if (!tex.current) {
+    const L = new THREE.TextureLoader();
+    const make = (p) => (p ? L.load(p, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }) : null);
+    tex.current = {
+      color: make('/textures/Wood059_2K-JPG_Color.jpg'),
+      normal: make('/textures/Wood059_2K-JPG_NormalGL.jpg'),
+      rough:  make('/textures/Wood059_2K-JPG_Roughness.jpg'),
+      ao:     make('/textures/Wood059_2K-JPG_AmbientOcclusion.jpg'),
+    };
+  }
+
+  useEffect(() => {
+    const el = mountRef.current;
+    if (!el) return;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xdde2e7);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.01, 1000);
+    camera.position.set(0, 2.5, 12);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(el.clientWidth, el.clientHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    el.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    const controls = new SimpleOrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controlsRef.current = controls;
+
+    // lighting that shows grooves from front
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const key = new THREE.DirectionalLight(0xffffff, 1.2);
+    key.position.set(-6, 8, 10);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0xffffff, 0.4);
+    fill.position.set(6, 5, 4);
+    scene.add(fill);
+
+    // soft ground
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(60, 60),
+      new THREE.ShadowMaterial({ opacity: 0.18 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -5;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const doorGroup = new THREE.Group();
+    scene.add(doorGroup);
+    doorGroupRef.current = doorGroup;
+
+    const tick = () => {
+      animationIdRef.current = requestAnimationFrame(tick);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    tick();
+
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width && height) {
+        renderer.setSize(width, height);
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        fitCameraToObjects(camera, controls, [doorGroupRef.current]);
+      }
+    });
+    ro.observe(el);
+
+    return () => {
+      ro.disconnect();
+      if (animationIdRef.current) cancelAnimationFrame(animationIdRef.current);
+      controls.dispose?.();
+      renderer.dispose?.();
+      if (renderer.domElement && el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  /* -------------------------- build / update door -------------------------- */
+  useEffect(() => {
+    const doorGroup = doorGroupRef.current;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!doorGroup || !camera || !controls) return;
+
+    // clear previous
+    while (doorGroup.children.length) {
+      const obj = doorGroup.children.pop();
+      obj.traverse?.(c => {
+        if (c.isMesh) {
+          c.geometry?.dispose();
+          if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
+          else c.material?.dispose();
+        }
+      });
+      if (obj.parent) obj.parent.remove(obj);
+    }
+
+    const { width, height, style } = config || {};
+    const W = (width || 16) / 12;
+    const H = (height || 7) / 12;
+
+    // textures repeat / anisotropy after we know the size
+    if (tex.current.color) {
+      const repX = Math.max(1, Math.round(W * 2.5));  // horizontal grain tiling
+      const repY = Math.max(1, Math.round(H * 1.0));
+      [tex.current.color, tex.current.normal, tex.current.rough, tex.current.ao].forEach(t => {
+        if (!t) return;
+        t.repeat.set(repX, repY);
+        t.anisotropy = 8;
+        t.needsUpdate = true;
+      });
+    }
+
+    // sandstone tint so grooves read clearly
+    const sandstone = new THREE.Color('#d2c1a0');
+
+    const baseMat = new THREE.MeshStandardMaterial({
+      color: sandstone,
+      map: tex.current.color || null,
+      normalMap: tex.current.normal || null,
+      roughnessMap: tex.current.rough || null,
+      aoMap: tex.current.ao || null,
+      roughness: 0.8,
+      metalness: 0.05,
+    });
+
+    const slabDepth = 0.14;
+    const slabGeo = new THREE.BoxGeometry(W, H, slabDepth);
+    // aoMap needs uv2
+    slabGeo.setAttribute('uv2', new THREE.BufferAttribute(slabGeo.attributes.uv.array, 2));
+
+    const slab = new THREE.Mesh(slabGeo, baseMat);
+    slab.castShadow = true;
+    slab.receiveShadow = true;
+    doorGroup.add(slab);
+
+    if (style === 'Raised Panel') {
+      const shoulderMat = new THREE.MeshStandardMaterial({
+        color: sandstone.clone().multiplyScalar(0.92),
+        roughness: 0.9, metalness: 0.02
+      });
+      const grooveMat = new THREE.MeshStandardMaterial({
+        color: sandstone.clone().multiplyScalar(0.8),
+        roughness: 0.95, metalness: 0.0
+      });
+      const innerMat = new THREE.MeshStandardMaterial({
+        color: sandstone.clone().multiplyScalar(0.9),
+        roughness: 0.9, metalness: 0.02
+      });
+
+      const rows = 4, cols = 2;
+      const cellW = W / cols;
+      const cellH = H / rows;
+      const frontZ = slabDepth / 2; // door's front face (toward camera)
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const cx = (c - (cols - 1) / 2) * cellW;
+          const cy = (r - (rows - 1) / 2) * cellH;
+
+          carveRaisedProfile(doorGroup, cx, cy, cellW, cellH, frontZ, {
+            shoulderWidth: 0.12,
+            shoulderDepth: 0.020,
+            grooveWidth:   0.12,
+            grooveDepth:   0.090,
+            innerInset:    0.12,
+            innerDepth:    0.105,
+            roundness:     0.035,
+            grooveBevel:   { thickness: 0.045, size: 0.055, segments: 4 },
+            shoulderMat, grooveMat, innerMat
+          });
+        }
+      }
+    }
+
+    // center & fit
+    const box = new THREE.Box3().setFromObject(doorGroup);
+    const center = box.getCenter(new THREE.Vector3());
+    doorGroup.position.sub(center);
+    if (typeof controls.reset === 'function') controls.reset();
+    fitCameraToObjects(camera, controls, [doorGroup]);
+  }, [config, is3D]);
+
+  // toggle orbit in 2D mode
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    controls.enabled = !!is3D;
+  }, [is3D]);
+
+  const handleZoom = (d) => controlsRef.current?.zoom?.(d);
+
+  return (
+    <div className="w-full h-full relative">
+      <div ref={mountRef} className="w-full h-full" />
+      <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
+        <button onClick={() => handleZoom(5)}
+          className="w-10 h-10 bg-white/70 rounded-full text-2xl font-bold flex items-center justify-center shadow-md hover:bg-white">-</button>
+        <button onClick={() => handleZoom(-5)}
+          className="w-10 h-10 bg-white/70 rounded-full text-2xl font-bold flex items-center justify-center shadow-md hover:bg-white">+</button>
+      </div>
+    </div>
+  );
+}

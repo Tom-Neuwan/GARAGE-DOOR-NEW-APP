@@ -1,0 +1,377 @@
+// src/components/ThreeVisualization.jsx
+import React, { useEffect, useRef } from 'react';
+import * as THREE from 'three';
+import SimpleOrbitControls from '../controls/SimpleOrbitControls';
+
+/* -------------------------- tunables (scene units ~ ft) -------------------------- */
+const SHOULDER_DEPTH = 0.020;   // shallow recess (outer ring)
+const GROOVE_DEPTH   = 0.100;   // deeper recess (beveled band)
+const INNER_DEPTH    = 0.115;   // deepest flat
+const SLAB_THICKNESS = 0.14;    // ~ 2" door thickness look
+
+const SHOULDER_WIDTH = 0.12;    // ring width
+const GROOVE_WIDTH   = 0.12;    // beveled band width
+const INNER_INSET    = 0.12;    // offset to inner flat
+const CORNER_R       = 0.035;   // rounded corners
+const EPS            = 0.0003;  // z-fighting guard
+
+/* ------------------------------ camera utility ------------------------------ */
+const fitCameraToObjects = (camera, controls, objects, fitOffset = 1.25) => {
+  if (!camera || !controls || !objects || !objects.length) return;
+  const box = new THREE.Box3();
+  objects.forEach(o => box.expandByObject(o));
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxSize = Math.max(size.x, size.y, size.z);
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+  const dist = (maxSize / 2) / Math.tan(fov / 2);
+  const newDist = Math.max(dist * fitOffset, 0.1);
+
+  controls.target.copy(center);
+  camera.position.copy(center.clone().add(new THREE.Vector3(0, 0, newDist)));
+  camera.near = newDist / 100;
+  camera.far  = newDist * 100;
+  camera.updateProjectionMatrix();
+
+  controls.minDistance = newDist / 4;
+  controls.maxDistance = newDist * 4;
+  controls.update();
+};
+
+/* ----------------------- rounded rectangles (helpers) ----------------------- */
+// centered at origin (used for the door outline)
+function roundedRectShapeCentered(w, h, r) {
+  const s = new THREE.Shape();
+  const hw = w / 2, hh = h / 2;
+  const rr = Math.max(0, Math.min(r, hw * 0.95, hh * 0.95));
+  s.moveTo(-hw + rr, -hh);
+  s.lineTo( hw - rr, -hh);
+  s.quadraticCurveTo( hw, -hh,  hw, -hh + rr);
+  s.lineTo( hw,  hh - rr);
+  s.quadraticCurveTo( hw,  hh,  hw - rr,  hh);
+  s.lineTo(-hw + rr,  hh);
+  s.quadraticCurveTo(-hw,  hh, -hw,  hh - rr);
+  s.lineTo(-hw, -hh + rr);
+  s.quadraticCurveTo(-hw, -hh, -hw + rr, -hh);
+  return s;
+}
+
+// already-offset version (used for holes; no .translate() calls)
+function roundedRectShapeAt(cx, cy, w, h, r) {
+  const s = new THREE.Shape();
+  const hw = w / 2, hh = h / 2;
+  const rr = Math.max(0, Math.min(r, hw * 0.95, hh * 0.95));
+  s.moveTo(cx - hw + rr, cy - hh);
+  s.lineTo(cx + hw - rr, cy - hh);
+  s.quadraticCurveTo(cx + hw, cy - hh, cx + hw, cy - hh + rr);
+  s.lineTo(cx + hw, cy + hh - rr);
+  s.quadraticCurveTo(cx + hw, cy + hh, cx + hw - rr, cy + hh);
+  s.lineTo(cx - hw + rr, cy + hh);
+  s.quadraticCurveTo(cx - hw, cy + hh, cx - hw, cy + hh - rr);
+  s.lineTo(cx - hw, cy - hh + rr);
+  s.quadraticCurveTo(cx - hw, cy - hh, cx - hw + rr, cy - hh);
+  return s;
+}
+
+/* --------------------------- layered slab builder --------------------------- */
+function buildRaisedPanelLayers({
+  W, H, rows, cols, baseMat, shoulderMat, grooveMat, innerMat
+}) {
+  const group = new THREE.Group();
+  const cellW = W / cols;
+  const cellH = H / rows;
+
+  // door outline (slight radius so edges catch light)
+  const outline = roundedRectShapeCentered(W, H, 0.02);
+
+  // collect holes per layer
+  const holes0 = []; // outer panel rects (front face cuts)
+  const holes1 = []; // shoulder inner rects
+  const holes2 = []; // groove inner rects
+  const flats  = []; // center flats
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cx = (c - (cols - 1) / 2) * cellW;
+      const cy = (r - (rows - 1) / 2) * cellH;
+
+      const panelW = cellW * 0.80;
+      const panelH = cellH * 0.60;
+
+      const shoulderOuterW = panelW;
+      const shoulderOuterH = panelH;
+      const shoulderInnerW = panelW - 2 * SHOULDER_WIDTH;
+      const shoulderInnerH = panelH - 2 * SHOULDER_WIDTH;
+
+      const grooveOuterW = shoulderInnerW;
+      const grooveOuterH = shoulderInnerH;
+      const grooveInnerW = grooveOuterW - 2 * GROOVE_WIDTH;
+      const grooveInnerH = grooveOuterH - 2 * GROOVE_WIDTH;
+
+      const flatW = Math.max(0.05, grooveInnerW - 2 * INNER_INSET);
+      const flatH = Math.max(0.05, grooveInnerH - 2 * INNER_INSET);
+
+      holes0.push(roundedRectShapeAt(cx, cy, shoulderOuterW, shoulderOuterH, CORNER_R));
+      holes1.push(roundedRectShapeAt(cx, cy, shoulderInnerW, shoulderInnerH, Math.max(0, CORNER_R - 0.02)));
+      holes2.push(roundedRectShapeAt(cx, cy, grooveInnerW,   grooveInnerH,   Math.max(0, CORNER_R - 0.04)));
+
+      flats.push({ cx, cy, w: flatW, h: flatH });
+    }
+  }
+
+  const frontZ = SLAB_THICKNESS / 2;
+
+  // Skin 0: super-thin face with OUTER panel holes
+  const skin0Shape = outline.clone();
+  holes0.forEach(h => skin0Shape.holes.push(h));
+  const skin0Geo = new THREE.ExtrudeGeometry(skin0Shape, { depth: 0.004, bevelEnabled: false });
+  skin0Geo.setAttribute('uv2', new THREE.BufferAttribute(skin0Geo.attributes.uv.array, 2));
+  const skin0 = new THREE.Mesh(skin0Geo, baseMat);
+  skin0.position.z = frontZ - EPS;
+  skin0.castShadow = skin0.receiveShadow = true;
+  group.add(skin0);
+
+  // Skin 1: shoulder level (deeper), holes at shoulder-inner
+  const skin1Shape = outline.clone();
+  holes1.forEach(h => skin1Shape.holes.push(h));
+  const skin1Thickness = Math.max(0.002, SHOULDER_DEPTH - 0.004);
+  const skin1Geo = new THREE.ExtrudeGeometry(skin1Shape, { depth: skin1Thickness, bevelEnabled: false });
+  skin1Geo.translate(0, 0, -skin1Thickness);
+  skin1Geo.setAttribute('uv2', new THREE.BufferAttribute(skin1Geo.attributes.uv.array, 2));
+  const skin1 = new THREE.Mesh(skin1Geo, shoulderMat);
+  skin1.position.z = frontZ - EPS;
+  skin1.castShadow = skin1.receiveShadow = true;
+  group.add(skin1);
+
+  // Skin 2: groove level (deeper), holes at groove-inner
+  const skin2Shape = outline.clone();
+  holes2.forEach(h => skin2Shape.holes.push(h));
+  const skin2Thickness = Math.max(0.002, GROOVE_DEPTH - SHOULDER_DEPTH);
+  const skin2Geo = new THREE.ExtrudeGeometry(skin2Shape, { depth: skin2Thickness, bevelEnabled: false });
+  skin2Geo.translate(0, 0, -skin2Thickness);
+  skin2Geo.setAttribute('uv2', new THREE.BufferAttribute(skin2Geo.attributes.uv.array, 2));
+  const skin2 = new THREE.Mesh(skin2Geo, grooveMat);
+  skin2.position.z = frontZ - EPS;
+  skin2.castShadow = skin2.receiveShadow = true;
+  group.add(skin2);
+
+  // Inner flats (deepest)
+  flats.forEach(({ cx, cy, w, h }) => {
+    const t = 0.004;
+    const flatGeo = new THREE.BoxGeometry(w, h, t);
+    flatGeo.setAttribute('uv2', new THREE.BufferAttribute(flatGeo.attributes.uv.array, 2));
+    const flat = new THREE.Mesh(flatGeo, innerMat);
+    flat.position.set(cx, cy, frontZ - INNER_DEPTH - t / 2);
+    flat.castShadow = flat.receiveShadow = true;
+    group.add(flat);
+  });
+
+  return group;
+}
+
+/* -------------------------------- component -------------------------------- */
+export default function ThreeVisualization({ config, is3D }) {
+  const mountRef = useRef(null);
+  const sceneRef = useRef(null);
+  const rendererRef = useRef(null);
+  const cameraRef = useRef(null);
+  const doorGroupRef = useRef(null);
+  const controlsRef = useRef(null);
+  const animationIdRef = useRef(null);
+
+  // texture cache
+  const tex = useRef(null);
+  if (!tex.current) {
+    const L = new THREE.TextureLoader();
+    const make = (p) => (p ? L.load(p, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }) : null);
+    tex.current = {
+      color: make('/textures/Wood059_2K-JPG_Color.jpg'),
+      normal: make('/textures/Wood059_2K-JPG_NormalGL.jpg'),
+      rough:  make('/textures/Wood059_2K-JPG_Roughness.jpg'),
+      ao:     make('/textures/Wood059_2K-JPG_AmbientOcclusion.jpg'),
+    };
+  }
+
+  useEffect(() => {
+    const el = mountRef.current;
+    if (!el) return;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xdde2e7);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.01, 1000);
+    camera.position.set(0, 2.5, 12);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(el.clientWidth, el.clientHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    el.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    const controls = new SimpleOrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controlsRef.current = controls;
+
+    // lighting oriented to reveal grooves from the front
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const key = new THREE.DirectionalLight(0xffffff, 1.15);
+    key.position.set(-6, 8, 10);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    scene.add(key);
+
+    const fill = new THREE.DirectionalLight(0xffffff, 0.45);
+    fill.position.set(6, 5, 4);
+    scene.add(fill);
+
+    // ground
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(60, 60),
+      new THREE.ShadowMaterial({ opacity: 0.18 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -5;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const doorGroup = new THREE.Group();
+    scene.add(doorGroup);
+    doorGroupRef.current = doorGroup;
+
+    const tick = () => {
+      animationIdRef.current = requestAnimationFrame(tick);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    tick();
+
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (width && height) {
+        renderer.setSize(width, height);
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        fitCameraToObjects(camera, controls, [doorGroupRef.current]);
+      }
+    });
+    ro.observe(el);
+
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(animationIdRef.current);
+      controls.dispose?.();
+      renderer.dispose?.();
+      if (renderer.domElement && el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  // build / rebuild door
+  useEffect(() => {
+    const doorGroup = doorGroupRef.current;
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!doorGroup || !camera || !controls) return;
+
+    // clear
+    while (doorGroup.children.length) {
+      const obj = doorGroup.children.pop();
+      obj.traverse?.(c => {
+        if (c.isMesh) {
+          c.geometry?.dispose();
+          if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
+          else c.material?.dispose();
+        }
+      });
+      obj.parent?.remove(obj);
+    }
+
+    const { width, height, style } = config || {};
+    const W = (width || 16) / 12;
+    const H = (height || 7) / 12;
+
+    // texture tiling
+    if (tex.current.color) {
+      const repX = Math.max(1, Math.round(W * 2.5));
+      const repY = Math.max(1, Math.round(H * 1.0));
+      [tex.current.color, tex.current.normal, tex.current.rough, tex.current.ao].forEach(t => {
+        if (!t) return;
+        t.repeat.set(repX, repY);
+        t.anisotropy = 8;
+        t.needsUpdate = true;
+      });
+    }
+
+    // sandstone tint so carving is visible
+    const sandstone = new THREE.Color('#d2c1a0');
+
+    // base slab (back mass)
+    const baseMat = new THREE.MeshStandardMaterial({
+      color: sandstone,
+      map: tex.current.color || null,
+      normalMap: tex.current.normal || null,
+      roughnessMap: tex.current.rough || null,
+      aoMap: tex.current.ao || null,
+      roughness: 0.8,
+      metalness: 0.05,
+    });
+
+    const slabGeo = new THREE.BoxGeometry(W, H, SLAB_THICKNESS);
+    slabGeo.setAttribute('uv2', new THREE.BufferAttribute(slabGeo.attributes.uv.array, 2));
+    const slab = new THREE.Mesh(slabGeo, baseMat);
+    slab.castShadow = slab.receiveShadow = true;
+    doorGroup.add(slab);
+
+    if (style === 'Raised Panel') {
+      // slight color shifts per level for readability
+      const shoulderMat = baseMat.clone();
+      shoulderMat.color = sandstone.clone().multiplyScalar(0.96);
+
+      const grooveMat = baseMat.clone();
+      grooveMat.color = sandstone.clone().multiplyScalar(0.88);
+
+      const innerMat = baseMat.clone();
+      innerMat.color = sandstone.clone().multiplyScalar(0.92);
+
+      const layers = buildRaisedPanelLayers({
+        W, H, rows: 4, cols: 2,
+        baseMat, shoulderMat, grooveMat, innerMat
+      });
+      doorGroup.add(layers);
+    }
+
+    // center & fit
+    const box = new THREE.Box3().setFromObject(doorGroup);
+    const center = box.getCenter(new THREE.Vector3());
+    doorGroup.position.sub(center);
+    if (typeof controls.reset === 'function') controls.reset();
+    fitCameraToObjects(camera, controls, [doorGroup]);
+  }, [config, is3D]);
+
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    controls.enabled = !!is3D;
+  }, [is3D]);
+
+  const handleZoom = (d) => controlsRef.current?.zoom?.(d);
+
+  return (
+    <div className="w-full h-full relative">
+      <div ref={mountRef} className="w-full h-full" />
+      <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
+        <button
+          onClick={() => handleZoom(5)}
+          className="w-10 h-10 bg-white/70 rounded-full text-2xl font-bold flex items-center justify-center shadow-md hover:bg-white"
+        >-</button>
+        <button
+          onClick={() => handleZoom(-5)}
+          className="w-10 h-10 bg-white/70 rounded-full text-2xl font-bold flex items-center justify-center shadow-md hover:bg-white"
+        >+</button>
+      </div>
+    </div>
+  );
+}
