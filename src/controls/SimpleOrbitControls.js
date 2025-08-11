@@ -7,9 +7,9 @@ export default class SimpleOrbitControls {
     this.domElement = domElement;
     this.target = new THREE.Vector3(0, 4, 0);
 
-    // zoom limits
-    this.minDistance = 10;
-    this.maxDistance = 50;
+    // Wide zoom limits
+    this.minDistance = 0.3;   // let the camera get very close
+    this.maxDistance = 300;   // allow very far zoom out
 
     // spherical state
     this.spherical = new THREE.Spherical(25);
@@ -26,9 +26,9 @@ export default class SimpleOrbitControls {
     this.enabled = false;
 
     // bindings
-    this.onMouseDown = this.onMouseDown.bind(this);
-    this.onMouseMove = this.onMouseMove.bind(this);
-    this.onMouseUp = this.onMouseUp.bind(this);
+    this.onMouseDown  = this.onMouseDown.bind(this);
+    this.onMouseMove  = this.onMouseMove.bind(this);
+    this.onMouseUp    = this.onMouseUp.bind(this);
     this.onMouseLeave = this.onMouseLeave.bind(this);
     this.onMouseWheel = this.onMouseWheel.bind(this);
     this.onContextMenu = (e) => e.preventDefault();
@@ -48,7 +48,6 @@ export default class SimpleOrbitControls {
   syncFrom(camera = this.camera, target = this.target) {
     this.target.copy(target);
     this.spherical.setFromVector3(camera.position.clone().sub(this.target));
-    // derive lon/lat so mouse deltas keep feeling continuous
     const phiDeg = THREE.MathUtils.radToDeg(this.spherical.phi);
     const thetaDeg = THREE.MathUtils.radToDeg(this.spherical.theta);
     this.lat = 90 - phiDeg;
@@ -68,12 +67,19 @@ export default class SimpleOrbitControls {
     this.spherical.radius = THREE.MathUtils.clamp(this.spherical.radius, min, max);
   }
 
+  /** Linear zoom (used by +/- UI buttons). */
   zoom(delta) {
     this.spherical.radius = THREE.MathUtils.clamp(
       this.spherical.radius + delta,
       this.minDistance,
       this.maxDistance
     );
+  }
+
+  /** Multiplicative zoom for smooth wheel feel. */
+  zoomScale(scale) {
+    const r = this.spherical.radius * scale;
+    this.spherical.radius = THREE.MathUtils.clamp(r, this.minDistance, this.maxDistance);
   }
 
   // --- events ----------------------------------------------------------------
@@ -111,8 +117,9 @@ export default class SimpleOrbitControls {
   onMouseWheel(event) {
     if (!this.enabled) return;
     event.preventDefault();
-    // smoother wheel zoom
-    this.zoom(event.deltaY * 0.02);
+    // exponential for consistent feel at any distance
+    const scale = Math.exp(event.deltaY * 0.0012); // tweak factor to taste
+    this.zoomScale(scale);
   }
 
   // --- lifecycle -------------------------------------------------------------
@@ -128,7 +135,7 @@ export default class SimpleOrbitControls {
     this.spherical.phi += (targetPhi - this.spherical.phi) * dampingFactor;
     this.spherical.theta += (targetTheta - this.spherical.theta) * dampingFactor;
 
-    // clamp distance
+    // enforce distance
     this.spherical.radius = THREE.MathUtils.clamp(
       this.spherical.radius,
       this.minDistance,

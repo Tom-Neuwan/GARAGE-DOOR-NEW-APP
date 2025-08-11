@@ -5,7 +5,7 @@ import SimpleOrbitControls from '../controls/SimpleOrbitControls';
 
 /* -------------------------- tunables (scene units ~ ft) -------------------------- */
 const SLAB_THICKNESS = 0.167;        // 2" door thickness in feet
-const PANEL_RECESS_DEPTH = 0.083;    // 1" panels milled deep into door
+const PANEL_RECESS_DEPTH = 0.133;    // 1.6" total panel area cut from door front
 const VCARVE_DEPTH = 0.042;          // V-carve transition depth (0.5")
 const GROOVE_WIDTH = 0.021;          // Main groove width between sections
 const GROOVE_DEPTH = 0.025;          // Main groove depth
@@ -34,7 +34,7 @@ const fitCameraToObjects = (camera, controls, objects, fitOffset = 1.25) => {
 };
 
 /* ----------------------- create door with carved panels ----------------------- */
-function buildMilledGarageDoor({ W, H, baseMaterial, grooveMaterial, panelMaterial }) {
+function buildMilledGarageDoor({ W, H, baseMaterial, grooveMaterial, panelMaterial, textures }) {
   const group = new THREE.Group();
   
   // Calculate sections (4 sections for garage door)
@@ -84,11 +84,27 @@ function buildMilledGarageDoor({ W, H, baseMaterial, grooveMaterial, panelMateri
   doorFrameMesh.receiveShadow = true;
   group.add(doorFrameMesh);
   
+  // Create FLAT BACK of door (white/light colored)
+  const backMaterial = new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#F8F8F8'), // Light color for back
+    map: textures?.color || null,
+    normalMap: textures?.normal || null,
+    roughnessMap: textures?.rough || null,
+    aoMap: textures?.ao || null,
+    roughness: 0.8,
+    metalness: 0.05,
+  });
+  
+  const backGeometry = new THREE.BoxGeometry(W, H, 0.005);
+  const backMesh = new THREE.Mesh(backGeometry, backMaterial);
+  backMesh.position.z = -SLAB_THICKNESS - 0.0025;
+  backMesh.receiveShadow = true;
+  group.add(backMesh);
+  
   // Create grooves between sections
   for (let i = 1; i < sections; i++) {
     const grooveY = (i - sections / 2) * sectionHeight + sectionHeight / 2;
     
-    // Create groove as an inset channel
     const grooveShape = new THREE.Shape();
     grooveShape.moveTo(-W/2 * 0.98, grooveY - GROOVE_WIDTH/2);
     grooveShape.lineTo(W/2 * 0.98, grooveY - GROOVE_WIDTH/2);
@@ -127,55 +143,111 @@ function buildMilledGarageDoor({ W, H, baseMaterial, grooveMaterial, panelMateri
   centerGrooveMesh.receiveShadow = true;
   group.add(centerGrooveMesh);
   
-  // Create the recessed panel bottoms and walls
-  panelPositions.forEach(({ x, y, w, h }) => {
-    // Create the recessed panel bottom
-    const panelShape = new THREE.Shape();
-    panelShape.moveTo(-w/2, -h/2);
-    panelShape.lineTo(w/2, -h/2);
-    panelShape.lineTo(w/2, h/2);
-    panelShape.lineTo(-w/2, h/2);
-    panelShape.lineTo(-w/2, -h/2);
+ // Create multi-level panels CARVED INTO the door material
+panelPositions.forEach(({ x, y, w, h }) => {
+    // ALL GEOMETRY MUST BE RECESSED INTO THE DOOR (NEGATIVE Z FROM SURFACE)
     
-    const panelGeometry = new THREE.ExtrudeGeometry(panelShape, {
-      depth: 0.005, // Very thin bottom
-      bevelEnabled: false
+    // Level 1: Roundover edge transition
+    const roundoverRadius = 0.050;
+    const roundoverDepth = 0.05;
+    
+    const roundoverShape = new THREE.Shape();
+    roundoverShape.moveTo(-w/2, -h/2);
+    roundoverShape.lineTo(w/2, -h/2);
+    roundoverShape.lineTo(w/2, h/2);
+    roundoverShape.lineTo(-w/2, h/2);
+    roundoverShape.lineTo(-w/2, -h/2);
+    
+    const level1InnerW = w - (roundoverRadius * 2);
+    const level1InnerH = h - (roundoverRadius * 2);
+    const roundoverHole = new THREE.Path();
+    roundoverHole.moveTo(-level1InnerW/2, -level1InnerH/2);
+    roundoverHole.lineTo(level1InnerW/2, -level1InnerH/2);
+    roundoverHole.lineTo(level1InnerW/2, level1InnerH/2);
+    roundoverHole.lineTo(-level1InnerW/2, level1InnerH/2);
+    roundoverHole.lineTo(-level1InnerW/2, -level1InnerH/2);
+    roundoverShape.holes.push(roundoverHole);
+    
+    const roundoverGeometry = new THREE.ExtrudeGeometry(roundoverShape, {
+      depth: roundoverDepth,
+      bevelEnabled: true,
+      bevelThickness: roundoverRadius * 0.5,
+      bevelSize: roundoverRadius * 0.4,
+      bevelSegments: 6
+    });
+    roundoverGeometry.translate(0, 0, -roundoverDepth);
+    
+    const roundoverMesh = new THREE.Mesh(roundoverGeometry, panelMaterial);
+    roundoverMesh.position.set(x, y, -roundoverDepth);
+    roundoverMesh.receiveShadow = true;
+    group.add(roundoverMesh);
+    
+    
+    // Level 2: Deep recessed flat area
+    const deepWidth = 0.14;
+    const deepDepth = 0.042;
+    // FIXED: Added the overlap constant to prevent visual seams.
+    const overlap = 0.001; 
+    
+    const deepShape = new THREE.Shape();
+    // FIXED: Make the shape slightly larger with the overlap value.
+    deepShape.moveTo(-(level1InnerW/2 + overlap), -(level1InnerH/2 + overlap));
+    deepShape.lineTo( (level1InnerW/2 + overlap), -(level1InnerH/2 + overlap));
+    deepShape.lineTo( (level1InnerW/2 + overlap),  (level1InnerH/2 + overlap));
+    deepShape.lineTo(-(level1InnerW/2 + overlap),  (level1InnerH/2 + overlap));
+    deepShape.lineTo(-(level1InnerW/2 + overlap), -(level1InnerH/2 + overlap));
+  
+    const centerPanelW = level1InnerW - (deepWidth * 2); 
+    const centerPanelH = level1InnerH - (deepWidth * 2);
+    const deepHole = new THREE.Path();
+    deepHole.moveTo(-centerPanelW/2, -centerPanelH/2);
+    deepHole.lineTo(centerPanelW/2, -centerPanelH/2);
+    deepHole.lineTo(centerPanelW/2, centerPanelH/2);
+    deepHole.lineTo(-centerPanelW/2, centerPanelH/2);
+    deepHole.lineTo(-centerPanelW/2, -centerPanelH/2);
+    deepShape.holes.push(deepHole);
+    
+    const deepGeometry = new THREE.ExtrudeGeometry(deepShape, {
+        depth: deepDepth,
+        bevelEnabled: true,
+        bevelThickness: 0.012,
+        bevelSize: 0.010,
+        bevelSegments: 4
+      });
+    deepGeometry.translate(0, 0, -deepDepth);
+    
+    const deepMesh = new THREE.Mesh(deepGeometry, grooveMaterial);
+    deepMesh.position.set(x, y, -roundoverDepth - deepDepth);
+    deepMesh.receiveShadow = true;
+    group.add(deepMesh);
+    
+    // Level 3: Center raised panel
+    const raisedHeight = roundoverDepth + deepDepth;
+    
+    const centerShape = new THREE.Shape();
+    centerShape.moveTo(-centerPanelW/2, -centerPanelH/2);
+    centerShape.lineTo(centerPanelW/2, -centerPanelH/2);
+    centerShape.lineTo(centerPanelW/2, centerPanelH/2);
+    centerShape.lineTo(-centerPanelW/2, centerPanelH/2);
+    centerShape.lineTo(-centerPanelW/2, -centerPanelH/2);
+    
+    const centerGeometry = new THREE.ExtrudeGeometry(centerShape, {
+        depth: raisedHeight,
+        bevelEnabled: true,
+        bevelThickness: 0.010,
+        bevelSize: 0.090,
+        bevelSegments: 1
     });
     
-    const panelMesh = new THREE.Mesh(panelGeometry, panelMaterial);
-    panelMesh.position.set(x, y, -SLAB_THICKNESS + PANEL_RECESS_DEPTH);
-    panelMesh.receiveShadow = true;
-    group.add(panelMesh);
-    
-    // Create V-carved walls around the panel
-    const wallThickness = 0.005;
-    const vCarveHeight = PANEL_RECESS_DEPTH - VCARVE_DEPTH;
-    
-    // Top wall
-    const topWallGeometry = new THREE.BoxGeometry(w, wallThickness, vCarveHeight);
-    const topWall = new THREE.Mesh(topWallGeometry, panelMaterial);
-    topWall.position.set(x, y + h/2, -SLAB_THICKNESS + VCARVE_DEPTH + vCarveHeight/2);
-    topWall.receiveShadow = true;
-    group.add(topWall);
-    
-    // Bottom wall
-    const bottomWall = new THREE.Mesh(topWallGeometry.clone(), panelMaterial);
-    bottomWall.position.set(x, y - h/2, -SLAB_THICKNESS + VCARVE_DEPTH + vCarveHeight/2);
-    bottomWall.receiveShadow = true;
-    group.add(bottomWall);
-    
-    // Left wall
-    const sideWallGeometry = new THREE.BoxGeometry(wallThickness, h, vCarveHeight);
-    const leftWall = new THREE.Mesh(sideWallGeometry, panelMaterial);
-    leftWall.position.set(x - w/2, y, -SLAB_THICKNESS + VCARVE_DEPTH + vCarveHeight/2);
-    leftWall.receiveShadow = true;
-    group.add(leftWall);
-    
-    // Right wall
-    const rightWall = new THREE.Mesh(sideWallGeometry.clone(), panelMaterial);
-    rightWall.position.set(x + w/2, y, -SLAB_THICKNESS + VCARVE_DEPTH + vCarveHeight/2);
-    rightWall.receiveShadow = true;
-    group.add(rightWall);
+    // FIXED: This crucial line was missing. It moves the geometry before creating the mesh.
+    centerGeometry.translate(0, 0, -raisedHeight);
+  
+    const centerMesh = new THREE.Mesh(centerGeometry, baseMaterial);
+    // This positioning logic is now correct because the geometry has been translated.
+    centerMesh.position.set(x, y, -roundoverDepth - deepDepth + raisedHeight);
+    centerMesh.castShadow = true;
+    centerMesh.receiveShadow = true;
+    group.add(centerMesh);
   });
   
   return group;
@@ -374,7 +446,8 @@ export default function ThreeVisualization({ config, is3D }) {
         W, H,
         baseMaterial,
         grooveMaterial,
-        panelMaterial
+        panelMaterial,
+        textures: tex.current
       });
       doorGroup.add(door);
     } else {
