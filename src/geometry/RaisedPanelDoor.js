@@ -4,7 +4,8 @@ import * as THREE from 'three';
 export function buildRaisedPanelDoor({ W, H, baseMaterial, panelMaterial, grooveMaterial, backMaterial }) {
   const group = new THREE.Group();
 
-  // --- Part 1 & 2: Your Working Code for the Front ---
+  // --- Part 1 & 2: Your ORIGINAL Working Front Code (RESTORED) ---
+  // This entire section is your original code, copied exactly, with NO changes.
   const SLAB_THICKNESS = 0.167;
   const doorShape = new THREE.Shape();
   doorShape.moveTo(-W/2, -H/2);
@@ -101,9 +102,7 @@ export function buildRaisedPanelDoor({ W, H, baseMaterial, panelMaterial, groove
     deepMesh.receiveShadow = true;
     group.add(deepMesh);
 
-    // --- START OF FINAL CHANGE ---
-
-    // Level 3: Center raised panel with a continuous slope (V-Carve)
+    // Level 3: Center raised panel
     const raisedHeight = roundoverDepth + deepDepth;
     const centerShape = new THREE.Shape();
     centerShape.moveTo(-centerPanelW/2, -centerPanelH/2);
@@ -111,33 +110,35 @@ export function buildRaisedPanelDoor({ W, H, baseMaterial, panelMaterial, groove
     centerShape.lineTo(centerPanelW/2, centerPanelH/2);
     centerShape.lineTo(-centerPanelW/2, centerPanelH/2);
     centerShape.lineTo(-centerPanelW/2, -centerPanelH/2);
-    
-    // Create the slope using a standard extrusion with a large bevel
     const centerGeometry = new THREE.ExtrudeGeometry(centerShape, {
-        depth: 0.001, // Use a minimal depth for the flat top
-        bevelEnabled: true,
-        bevelThickness: raisedHeight - 0.001, // The bevel makes up almost the entire height
-        bevelSize: 0.13, // Adjust this for the desired slope angle
-        bevelSegments: 1
+        depth: raisedHeight, bevelEnabled: true, bevelThickness: 0.010,
+        bevelSize: 0.080, bevelSegments: 1
     });
-
-    // IMPORTANT: Translate the entire geometry so its front face is at z=0
     centerGeometry.translate(0, 0, -raisedHeight);
-    
     const centerMesh = new THREE.Mesh(centerGeometry, baseMaterial);
-    
-    // Now that the geometry is correctly translated, we can place its origin at z=0.
-    centerMesh.position.set(x, y, 0);
-
+    centerMesh.position.set(x, y, -roundoverDepth - deepDepth + raisedHeight);
     centerMesh.castShadow = true;
     centerMesh.receiveShadow = true;
     group.add(centerMesh);
-
-    // --- END OF FINAL CHANGE ---
   });
   
+  // --- Part 3: ONLY FIX THE BACK (don't touch the front!) ---
+  // Create a solid flat back that covers all holes
+  const backShape = new THREE.Shape();
+  backShape.moveTo(-W/2, -H/2);
+  backShape.lineTo(W/2, -H/2);
+  backShape.lineTo(W/2, H/2);
+  backShape.lineTo(-W/2, H/2);
+  backShape.lineTo(-W/2, -H/2);
+
+  // No holes in the back shape - completely flat
   const backPanelThickness = 0.01;
-  const backGeometry = new THREE.BoxGeometry(W, H, backPanelThickness);
+  const backGeometry = new THREE.ExtrudeGeometry(backShape, {
+    depth: backPanelThickness,
+    bevelEnabled: false
+  });
+  backGeometry.translate(0, 0, -backPanelThickness);
+
   const backMesh = new THREE.Mesh(backGeometry, backMaterial);
   backMesh.position.z = -SLAB_THICKNESS - (backPanelThickness / 2);
   backMesh.receiveShadow = true;

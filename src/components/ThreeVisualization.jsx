@@ -3,6 +3,7 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import SimpleOrbitControls from '../controls/SimpleOrbitControls';
 import { buildRaisedPanelDoor } from '../geometry/RaisedPanelDoor.js';
+
 /* -------------------------- tunables (scene units ~ ft) -------------------------- */
 const SLAB_THICKNESS = 0.167;        // 2" door thickness in feet
 const PANEL_RECESS_DEPTH = 0.133;    // 1.6" total panel area cut from door front
@@ -95,7 +96,11 @@ export default function ThreeVisualization({ config, is3D }) {
     keyLight.shadow.camera.right = 15;
     keyLight.shadow.camera.top = 15;
     keyLight.shadow.camera.bottom = -15;
-    keyLight.shadow.bias = -0.0001;
+    
+    // --- THIS IS THE FIX ---
+    // Adjusting the shadow bias prevents shadows from bleeding through thin geometry.
+    keyLight.shadow.bias = -0.0005; 
+    
     scene.add(keyLight);
 
     // Fill light from opposite side
@@ -221,7 +226,7 @@ export default function ThreeVisualization({ config, is3D }) {
       roughness: 0.85,
       metalness: 0.05,
     });
-
+    
     const backMaterial = new THREE.MeshStandardMaterial({
         color: 0xf8f8f8, // A light grey or white
     });

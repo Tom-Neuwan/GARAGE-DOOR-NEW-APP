@@ -3,7 +3,6 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import SimpleOrbitControls from '../controls/SimpleOrbitControls';
 
-/* --------------------------- camera util --------------------------- */
 const fitCameraToObjects = (camera, controls, objects, fitOffset = 1.25) => {
   if (!camera || !controls || !objects || !objects.length) return;
   const box = new THREE.Box3();
@@ -42,7 +41,6 @@ function roundedRectShape(w, h, r) {
   s.quadraticCurveTo(-hw, -hh, -hw + rr, -hh);
   return s;
 }
-
 /* -------------- one carved + beveled "raised panel" profile -------------- */
 /* IMPORTANT: we translate each extrude geometry backwards by its own depth,
    then place it at the door's FRONT Z, so it is recessed (carved) not added. */
@@ -358,4 +356,4 @@ export default function ThreeVisualization({ config, is3D }) {
       </div>
     </div>
   );
-}
+} 
