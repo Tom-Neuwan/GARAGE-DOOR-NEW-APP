@@ -7,6 +7,95 @@ import { buildRaisedPanelDoor } from '../geometry/RaisedPanelDoor.js';
 /* -------------------------- tunables (scene units ~ ft) -------------------------- */
 const SLAB_THICKNESS = 0.167;        // 2" door thickness in feet
 
+/* ------------------------------ texture utility ------------------------------ */
+const createWoodTexture = (color = '#8b5a2b', width = 512, height = 512) => {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  
+  // Base color
+  const baseColor = new THREE.Color(color);
+  ctx.fillStyle = baseColor.getStyle();
+  ctx.fillRect(0, 0, width, height);
+  
+  // Wood grain lines
+  for (let i = 0; i < 200; i++) {
+    const darkerColor = baseColor.clone().multiplyScalar(0.7 + Math.random() * 0.2);
+    ctx.strokeStyle = `rgba(${Math.floor(darkerColor.r * 255)}, ${Math.floor(darkerColor.g * 255)}, ${Math.floor(darkerColor.b * 255)}, ${Math.random() * 0.3 + 0.1})`;
+    ctx.beginPath();
+    
+    const y = (i / 200) * height + (Math.random() - 0.5) * 20;
+    const x1 = Math.random() * width * 0.1;
+    const x2 = width - Math.random() * width * 0.1;
+    
+    ctx.moveTo(x1, y);
+    ctx.bezierCurveTo(
+      x1 + width * 0.3, y + (Math.random() - 0.5) * 5,
+      x1 + width * 0.7, y + (Math.random() - 0.5) * 5,
+      x2, y
+    );
+    ctx.lineWidth = Math.random() * 1.5 + 0.5;
+    ctx.stroke();
+  }
+  
+  // Add some vertical grain variation
+  for (let i = 0; i < 50; i++) {
+    const lighterColor = baseColor.clone().multiplyScalar(1.1 + Math.random() * 0.1);
+    ctx.fillStyle = `rgba(${Math.floor(lighterColor.r * 255)}, ${Math.floor(lighterColor.g * 255)}, ${Math.floor(lighterColor.b * 255)}, ${Math.random() * 0.1 + 0.05})`;
+    
+    const x = Math.random() * width;
+    const y = Math.random() * height;
+    const w = Math.random() * 30 + 10;
+    const h = Math.random() * 100 + 50;
+    
+    ctx.fillRect(x, y, w, h);
+  }
+  
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = 16;
+  
+  return texture;
+};
+
+const createNormalMap = (width = 512, height = 512) => {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  
+  // Base normal (neutral blue)
+  ctx.fillStyle = '#8080ff';
+  ctx.fillRect(0, 0, width, height);
+  
+  // Add some noise for wood texture normal variations
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  
+  for (let i = 0; i < data.length; i += 4) {
+    const noise = (Math.random() - 0.5) * 40;
+    data[i] = Math.max(0, Math.min(255, 128 + noise));     // R
+    data[i + 1] = Math.max(0, Math.min(255, 128 + noise)); // G
+    data[i + 2] = Math.max(0, Math.min(255, 255));         // B (keep blue high)
+    data[i + 3] = 255; // A
+  }
+  
+  ctx.putImageData(imageData, 0, 0);
+  
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = 16;
+  
+  return texture;
+};
+
 /* ------------------------------ camera utility ------------------------------ */
 const fitCameraToObjects = (camera, controls, objects, fitOffset = 1.25) => {
   if (!camera || !controls || !objects || !objects.length) return;
@@ -30,7 +119,6 @@ const fitCameraToObjects = (camera, controls, objects, fitOffset = 1.25) => {
   controls.update();
 };
 
-
 /* -------------------------------- component -------------------------------- */
 export default function ThreeVisualization({ config, is3D }) {
   const mountRef = useRef(null);
@@ -41,20 +129,75 @@ export default function ThreeVisualization({ config, is3D }) {
   const controlsRef = useRef(null);
   const animationIdRef = useRef(null);
 
+  // texture cache with corrected paths and fallbacks
   const texturesRef = useRef(null);
-  if (!texturesRef.current) {
-    const L = new THREE.TextureLoader();
-    const makeSet = (folderName, fileName) => ({
-      color: L.load(`/textures/${folderName}/${fileName}_Color.jpg`, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
-      normal: L.load(`/textures/${folderName}/${fileName}_NormalGL.jpg`, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
-      rough: L.load(`/textures/${folderName}/${fileName}_Roughness.jpg`, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
-      ao: L.load(`/textures/${folderName}/${fileName}_AmbientOcclusion.jpg`, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
-    });
-    texturesRef.current = {
-      wood059: makeSet('Wood059_2K-JPG', 'Wood059_2K-JPG'),
-      wood060: makeSet('Wood060_2K-JPG', 'Wood060_2K-JPG'),
-    };
-  }
+  
+  useEffect(() => {
+    if (!texturesRef.current) {
+      const L = new THREE.TextureLoader();
+      
+      // Function to load texture with error handling
+      const loadTextureWithFallback = (url, fallbackTexture) => {
+        return new Promise((resolve) => {
+          L.load(
+            url,
+            (texture) => {
+              texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+              texture.anisotropy = 16;
+              console.log(`Successfully loaded texture: ${url}`);
+              resolve(texture);
+            },
+            undefined, // onProgress
+            (error) => {
+              console.warn(`Failed to load texture: ${url}, using fallback`);
+              resolve(fallbackTexture);
+            }
+          );
+        });
+      };
+
+      // Create fallback textures
+      const fallbackColor = createWoodTexture('#8B4513');
+      const fallbackNormal = createNormalMap();
+
+      // Load textures with correct nested folder paths
+      Promise.all([
+        loadTextureWithFallback('/textures/Wood059_2K-JPG/Wood059_2K-JPG_Color.jpg', fallbackColor),
+        loadTextureWithFallback('/textures/Wood059_2K-JPG/Wood059_2K-JPG_NormalGL.jpg', fallbackNormal),
+        loadTextureWithFallback('/textures/Wood059_2K-JPG/Wood059_2K-JPG_Roughness.jpg', null),
+        loadTextureWithFallback('/textures/Wood059_2K-JPG/Wood059_2K-JPG_AmbientOcclusion.jpg', null),
+        loadTextureWithFallback('/textures/Wood060_2K-JPG/Wood060_2K-JPG_Color.jpg', fallbackColor),
+        loadTextureWithFallback('/textures/Wood060_2K-JPG/Wood060_2K-JPG_NormalGL.jpg', fallbackNormal),
+        loadTextureWithFallback('/textures/Wood060_2K-JPG/Wood060_2K-JPG_Roughness.jpg', null),
+        loadTextureWithFallback('/textures/Wood060_2K-JPG/Wood060_2K-JPG_AmbientOcclusion.jpg', null),
+      ]).then(([
+        wood059Color, wood059Normal, wood059Rough, wood059AO,
+        wood060Color, wood060Normal, wood060Rough, wood060AO
+      ]) => {
+        texturesRef.current = {
+          wood059: {
+            color: wood059Color,
+            normal: wood059Normal,
+            rough: wood059Rough,
+            ao: wood059AO,
+          },
+          wood060: {
+            color: wood060Color,
+            normal: wood060Normal,
+            rough: wood060Rough,
+            ao: wood060AO,
+          }
+        };
+        
+        // Trigger a re-render when textures are loaded
+        if (doorGroupRef.current) {
+          // Force update by clearing and rebuilding the door
+          const event = new CustomEvent('texturesLoaded');
+          window.dispatchEvent(event);
+        }
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const el = mountRef.current;
@@ -134,22 +277,32 @@ export default function ThreeVisualization({ config, is3D }) {
     });
     ro.observe(el);
 
+    // Listen for texture loading completion
+    const handleTexturesLoaded = () => {
+      // Re-trigger door building when textures are loaded
+      const event = new CustomEvent('rebuildDoor');
+      window.dispatchEvent(event);
+    };
+    window.addEventListener('texturesLoaded', handleTexturesLoaded);
+
     return () => {
       ro.disconnect();
       cancelAnimationFrame(animationIdRef.current);
       controls.dispose?.();
       renderer.dispose?.();
+      window.removeEventListener('texturesLoaded', handleTexturesLoaded);
       if (renderer.domElement && el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };
   }, []);
 
   // build / rebuild door
-  useEffect(() => {
+  const rebuildDoor = React.useCallback(() => {
     const doorGroup = doorGroupRef.current;
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!doorGroup || !camera || !controls) return;
 
+    // Clear previous door
     while (doorGroup.children.length) {
       const obj = doorGroup.children.pop();
       obj.traverse?.(c => {
@@ -188,18 +341,29 @@ export default function ThreeVisualization({ config, is3D }) {
     const useTextures = isWoodGrain || isDarkWoodGrain;
 
     let activeTextures = null;
-    if (isWoodGrain) {
-      activeTextures = texturesRef.current.wood059;
-    } else if (isDarkWoodGrain) {
-      activeTextures = texturesRef.current.wood060;
+    if (texturesRef.current) {
+      if (isWoodGrain) {
+        activeTextures = texturesRef.current.wood059;
+      } else if (isDarkWoodGrain) {
+        activeTextures = texturesRef.current.wood060;
+      }
     }
 
-    // --- SIMPLIFIED: USE SAME TEXTURE APPROACH FOR ALL STYLES ---
-    let baseMaterial, grooveMaterial, panelMaterial;
+    // If textures not loaded yet, use procedural fallback
+    if (useTextures && !activeTextures) {
+      const fallbackColor = createWoodTexture(selectedColorValue);
+      const fallbackNormal = createNormalMap();
+      activeTextures = {
+        color: fallbackColor,
+        normal: fallbackNormal,
+        rough: null,
+        ao: null
+      };
+    }
 
-    // Always use the same texture scaling and approach regardless of style
-    if (useTextures) {
-      const textureScaleFactor = 4;
+    // Texture scaling - use consistent scaling for all parts
+    if (useTextures && activeTextures) {
+      const textureScaleFactor = 3; // Slightly larger scale for better grain visibility
       const repX = W / textureScaleFactor;
       const repY = H / textureScaleFactor;
 
@@ -211,40 +375,41 @@ export default function ThreeVisualization({ config, is3D }) {
       });
     }
 
-    // Create base material (same for all styles)
-    baseMaterial = new THREE.MeshStandardMaterial({
+    // Create materials - ALL use identical texture settings for consistency
+    const baseMaterial = new THREE.MeshStandardMaterial({
       color: useTextures ? 0xffffff : new THREE.Color(selectedColorValue),
-      map: useTextures ? activeTextures.color : null,
-      normalMap: useTextures ? activeTextures.normal : null,
-      roughnessMap: useTextures ? activeTextures.rough : null,
-      aoMap: useTextures ? activeTextures.ao : null,
-      roughness: useTextures ? 1.0 : 0.8,
+      map: useTextures && activeTextures ? activeTextures.color : null,
+      normalMap: useTextures && activeTextures ? activeTextures.normal : null,
+      roughnessMap: useTextures && activeTextures ? activeTextures.rough : null,
+      aoMap: useTextures && activeTextures ? activeTextures.ao : null,
+      roughness: useTextures ? 0.9 : 0.8,
       metalness: 0.05,
     });
 
-    // For raised panels, create variations of the base material
+    // For raised panels, use identical texture settings but vary only roughness slightly
+    let grooveMaterial, panelMaterial;
+    
     if (style === 'Raised Panel') {
       grooveMaterial = new THREE.MeshStandardMaterial({
-        color: useTextures ? new THREE.Color(0xffffff).multiplyScalar(0.7) : new THREE.Color(selectedColorValue).multiplyScalar(0.6),
-        map: useTextures ? activeTextures.color : null,
-        normalMap: useTextures ? activeTextures.normal : null,
-        roughnessMap: useTextures ? activeTextures.rough : null,
-        aoMap: useTextures ? activeTextures.ao : null,
-        roughness: useTextures ? 1.0 : 0.9,
+        color: useTextures ? 0xffffff : new THREE.Color(selectedColorValue).multiplyScalar(0.6),
+        map: useTextures && activeTextures ? activeTextures.color : null,
+        normalMap: useTextures && activeTextures ? activeTextures.normal : null,
+        roughnessMap: useTextures && activeTextures ? activeTextures.rough : null,
+        aoMap: useTextures && activeTextures ? activeTextures.ao : null,
+        roughness: useTextures ? 0.95 : 0.9, // Very subtle difference
         metalness: 0.05,
       });
 
       panelMaterial = new THREE.MeshStandardMaterial({
-        color: useTextures ? new THREE.Color(0xffffff).multiplyScalar(0.8) : new THREE.Color(selectedColorValue).multiplyScalar(0.7),
-        map: useTextures ? activeTextures.color : null,
-        normalMap: useTextures ? activeTextures.normal : null,
-        roughnessMap: useTextures ? activeTextures.rough : null,
-        aoMap: useTextures ? activeTextures.ao : null,
-        roughness: useTextures ? 1.0 : 0.85,
+        color: useTextures ? 0xffffff : new THREE.Color(selectedColorValue).multiplyScalar(0.7),
+        map: useTextures && activeTextures ? activeTextures.color : null,
+        normalMap: useTextures && activeTextures ? activeTextures.normal : null,
+        roughnessMap: useTextures && activeTextures ? activeTextures.rough : null,
+        aoMap: useTextures && activeTextures ? activeTextures.ao : null,
+        roughness: useTextures ? 0.92 : 0.85, // Very subtle difference
         metalness: 0.05,
       });
     } else {
-      // For non-raised panels, use the same material for all
       grooveMaterial = baseMaterial;
       panelMaterial = baseMaterial;
     }
@@ -263,7 +428,6 @@ export default function ThreeVisualization({ config, is3D }) {
       });
       doorGroup.add(door);
     } else {
-      // For other styles, use the base material which is already correct
       const simpleGeometry = new THREE.BoxGeometry(W, H, SLAB_THICKNESS);
       const simpleMesh = new THREE.Mesh(simpleGeometry, baseMaterial);
       simpleMesh.castShadow = true;
@@ -276,7 +440,17 @@ export default function ThreeVisualization({ config, is3D }) {
     doorGroup.position.sub(center);
     if (typeof controls.reset === 'function') controls.reset();
     fitCameraToObjects(camera, controls, [doorGroup]);
-  }, [config, is3D]);
+  }, [config]);
+
+  useEffect(() => {
+    rebuildDoor();
+  }, [config, is3D, rebuildDoor]);
+
+  useEffect(() => {
+    const handleRebuild = () => rebuildDoor();
+    window.addEventListener('rebuildDoor', handleRebuild);
+    return () => window.removeEventListener('rebuildDoor', handleRebuild);
+  }, [rebuildDoor]);
 
   useEffect(() => {
     const controls = controlsRef.current;
