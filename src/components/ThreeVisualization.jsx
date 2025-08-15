@@ -6,10 +6,6 @@ import { buildRaisedPanelDoor } from '../geometry/RaisedPanelDoor.js';
 
 /* -------------------------- tunables (scene units ~ ft) -------------------------- */
 const SLAB_THICKNESS = 0.167;        // 2" door thickness in feet
-const PANEL_RECESS_DEPTH = 0.133;    // 1.6" total panel area cut from door front
-const VCARVE_DEPTH = 0.042;          // V-carve transition depth (0.5")
-const GROOVE_WIDTH = 0.021;          // Main groove width between sections
-const GROOVE_DEPTH = 0.025;          // Main groove depth
 
 /* ------------------------------ camera utility ------------------------------ */
 const fitCameraToObjects = (camera, controls, objects, fitOffset = 1.25) => {
@@ -45,16 +41,18 @@ export default function ThreeVisualization({ config, is3D }) {
   const controlsRef = useRef(null);
   const animationIdRef = useRef(null);
 
-  // texture cache
-  const tex = useRef(null);
-  if (!tex.current) {
+  const texturesRef = useRef(null);
+  if (!texturesRef.current) {
     const L = new THREE.TextureLoader();
-    const make = (p) => (p ? L.load(p, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }) : null);
-    tex.current = {
-      color: make('/textures/Wood059_2K-JPG_Color.jpg'),
-      normal: make('/textures/Wood059_2K-JPG_NormalGL.jpg'),
-      rough:  make('/textures/Wood059_2K-JPG_Roughness.jpg'),
-      ao:     make('/textures/Wood059_2K-JPG_AmbientOcclusion.jpg'),
+    const makeSet = (folderName, fileName) => ({
+      color: L.load(`/textures/${folderName}/${fileName}_Color.jpg`, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
+      normal: L.load(`/textures/${folderName}/${fileName}_NormalGL.jpg`, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
+      rough: L.load(`/textures/${folderName}/${fileName}_Roughness.jpg`, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
+      ao: L.load(`/textures/${folderName}/${fileName}_AmbientOcclusion.jpg`, t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; }),
+    });
+    texturesRef.current = {
+      wood059: makeSet('Wood059_2K-JPG', 'Wood059_2K-JPG'),
+      wood060: makeSet('Wood060_2K-JPG', 'Wood060_2K-JPG'),
     };
   }
 
@@ -66,8 +64,8 @@ export default function ThreeVisualization({ config, is3D }) {
     scene.background = new THREE.Color(0xdde2e7);
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.01, 1000);
-    camera.position.set(0, 2.5, 12);
+    const camera = new THREE.PerspectiveCamera(35, el.clientWidth / el.clientHeight, 0.01, 1000);
+    camera.position.set(0, 2.5, 15); 
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -82,10 +80,8 @@ export default function ThreeVisualization({ config, is3D }) {
     controls.enableDamping = true;
     controlsRef.current = controls;
 
-    // Enhanced lighting to show depth and carved details
     scene.add(new THREE.AmbientLight(0xffffff, 0.3));
     
-    // Strong key light from front-left to show depth
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
     keyLight.position.set(-10, 8, 15);
     keyLight.castShadow = true;
@@ -96,24 +92,17 @@ export default function ThreeVisualization({ config, is3D }) {
     keyLight.shadow.camera.right = 15;
     keyLight.shadow.camera.top = 15;
     keyLight.shadow.camera.bottom = -15;
-    
-    // --- THIS IS THE FIX ---
-    // Adjusting the shadow bias prevents shadows from bleeding through thin geometry.
     keyLight.shadow.bias = -0.0005; 
-    
     scene.add(keyLight);
 
-    // Fill light from opposite side
     const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
     fillLight.position.set(10, 5, 8);
     scene.add(fillLight);
     
-    // Top light to illuminate recessed areas
     const topLight = new THREE.DirectionalLight(0xffffff, 0.6);
     topLight.position.set(0, 15, 5);
     scene.add(topLight);
 
-    // ground
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(60, 60),
       new THREE.ShadowMaterial({ opacity: 0.18 })
@@ -161,74 +150,107 @@ export default function ThreeVisualization({ config, is3D }) {
     const controls = controlsRef.current;
     if (!doorGroup || !camera || !controls) return;
 
-    // clear
     while (doorGroup.children.length) {
       const obj = doorGroup.children.pop();
       obj.traverse?.(c => {
         if (c.isMesh) {
           c.geometry?.dispose();
-          if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
-          else c.material?.dispose();
+          if (Array.isArray(c.material)) {
+            c.material.forEach(m => {
+              m.map?.dispose();
+              m.normalMap?.dispose();
+              m.roughnessMap?.dispose();
+              m.aoMap?.dispose();
+              m.dispose();
+            });
+          } else {
+            c.material.map?.dispose();
+            c.material.normalMap?.dispose();
+            c.material.roughnessMap?.dispose();
+            c.material.aoMap?.dispose();
+            c.material.dispose();
+          }
         }
       });
       obj.parent?.remove(obj);
     }
 
     const { width, height, style, colorIndex } = config || {};
-    const W = (width || 192) / 12;  // Convert inches to feet
+    const W = (width || 192) / 12;
     const H = (height || 84) / 12;
     
-    // Get color from config
     const colors = [
-      '#F5F5F5', '#F0EAD6', '#D8CDBA', '#8B4513', '#36454F', '#222222'
+      '#F5F5F5', '#F0EAD6', '#D8CDBA', '#8B4513', '#63473d', '#36454F', '#222222'
     ];
-    const doorColor = new THREE.Color(colors[colorIndex] || colors[3]);
+    const selectedColorValue = colors[colorIndex] || colors[3];
+    const isWoodGrain = colorIndex === 3;
+    const isDarkWoodGrain = colorIndex === 4;
+    const useTextures = isWoodGrain || isDarkWoodGrain;
 
-    // texture tiling
-    if (tex.current.color) {
-      const repX = Math.max(1, Math.round(W * 1.5));
-      const repY = Math.max(1, Math.round(H * 1.0));
-      [tex.current.color, tex.current.normal, tex.current.rough, tex.current.ao].forEach(t => {
+    let activeTextures = null;
+    if (isWoodGrain) {
+      activeTextures = texturesRef.current.wood059;
+    } else if (isDarkWoodGrain) {
+      activeTextures = texturesRef.current.wood060;
+    }
+
+    // --- SIMPLIFIED: USE SAME TEXTURE APPROACH FOR ALL STYLES ---
+    let baseMaterial, grooveMaterial, panelMaterial;
+
+    // Always use the same texture scaling and approach regardless of style
+    if (useTextures) {
+      const textureScaleFactor = 4;
+      const repX = W / textureScaleFactor;
+      const repY = H / textureScaleFactor;
+
+      Object.values(activeTextures).forEach(t => {
         if (!t) return;
         t.repeat.set(repX, repY);
-        t.anisotropy = 8;
+        t.anisotropy = rendererRef.current ? rendererRef.current.capabilities.getMaxAnisotropy() : 8;
         t.needsUpdate = true;
       });
     }
 
-    // Materials with proper depth variations
-    const baseMaterial = new THREE.MeshStandardMaterial({
-      color: doorColor.clone(),
-      map: tex.current.color || null,
-      normalMap: tex.current.normal || null,
-      roughnessMap: tex.current.rough || null,
-      aoMap: tex.current.ao || null,
-      roughness: 0.8,
+    // Create base material (same for all styles)
+    baseMaterial = new THREE.MeshStandardMaterial({
+      color: useTextures ? 0xffffff : new THREE.Color(selectedColorValue),
+      map: useTextures ? activeTextures.color : null,
+      normalMap: useTextures ? activeTextures.normal : null,
+      roughnessMap: useTextures ? activeTextures.rough : null,
+      aoMap: useTextures ? activeTextures.ao : null,
+      roughness: useTextures ? 1.0 : 0.8,
       metalness: 0.05,
     });
 
-    const grooveMaterial = new THREE.MeshStandardMaterial({
-      color: doorColor.clone().multiplyScalar(0.6),
-      map: tex.current.color || null,
-      normalMap: tex.current.normal || null,
-      roughnessMap: tex.current.rough || null,
-      aoMap: tex.current.ao || null,
-      roughness: 0.9,
-      metalness: 0.05,
-    });
+    // For raised panels, create variations of the base material
+    if (style === 'Raised Panel') {
+      grooveMaterial = new THREE.MeshStandardMaterial({
+        color: useTextures ? new THREE.Color(0xffffff).multiplyScalar(0.7) : new THREE.Color(selectedColorValue).multiplyScalar(0.6),
+        map: useTextures ? activeTextures.color : null,
+        normalMap: useTextures ? activeTextures.normal : null,
+        roughnessMap: useTextures ? activeTextures.rough : null,
+        aoMap: useTextures ? activeTextures.ao : null,
+        roughness: useTextures ? 1.0 : 0.9,
+        metalness: 0.05,
+      });
 
-    const panelMaterial = new THREE.MeshStandardMaterial({
-      color: doorColor.clone().multiplyScalar(0.7),
-      map: tex.current.color || null,
-      normalMap: tex.current.normal || null,
-      roughnessMap: tex.current.rough || null,
-      aoMap: tex.current.ao || null,
-      roughness: 0.85,
-      metalness: 0.05,
-    });
-    
+      panelMaterial = new THREE.MeshStandardMaterial({
+        color: useTextures ? new THREE.Color(0xffffff).multiplyScalar(0.8) : new THREE.Color(selectedColorValue).multiplyScalar(0.7),
+        map: useTextures ? activeTextures.color : null,
+        normalMap: useTextures ? activeTextures.normal : null,
+        roughnessMap: useTextures ? activeTextures.rough : null,
+        aoMap: useTextures ? activeTextures.ao : null,
+        roughness: useTextures ? 1.0 : 0.85,
+        metalness: 0.05,
+      });
+    } else {
+      // For non-raised panels, use the same material for all
+      grooveMaterial = baseMaterial;
+      panelMaterial = baseMaterial;
+    }
+
     const backMaterial = new THREE.MeshStandardMaterial({
-        color: 0xf8f8f8, // A light grey or white
+      color: 0xf8f8f8,
     });
 
     if (style === 'Raised Panel') {
@@ -237,20 +259,18 @@ export default function ThreeVisualization({ config, is3D }) {
         baseMaterial,
         grooveMaterial,
         panelMaterial,
-        backMaterial, // Pass the new material
+        backMaterial,
       });
       doorGroup.add(door);
     } else {
-      // Simple flat door for other styles
+      // For other styles, use the base material which is already correct
       const simpleGeometry = new THREE.BoxGeometry(W, H, SLAB_THICKNESS);
-      simpleGeometry.translate(0, 0, -SLAB_THICKNESS / 2);
       const simpleMesh = new THREE.Mesh(simpleGeometry, baseMaterial);
       simpleMesh.castShadow = true;
       simpleMesh.receiveShadow = true;
       doorGroup.add(simpleMesh);
     }
 
-    // center & fit
     const box = new THREE.Box3().setFromObject(doorGroup);
     const center = box.getCenter(new THREE.Vector3());
     doorGroup.position.sub(center);
