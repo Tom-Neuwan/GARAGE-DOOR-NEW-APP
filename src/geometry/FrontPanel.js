@@ -172,7 +172,7 @@ export function createFrontPanel({ W, H, baseMaterial, panelMaterial, grooveMate
     group.add(roundoverMesh);
 
     // Level 2: Deep recessed flat area
-    const deepWidth = 0.14;
+    const deepWidth = 0.2;
     const deepDepth = 0.042;
     const overlap = 0.001;
     const deepShape = new THREE.Shape();
@@ -208,7 +208,8 @@ export function createFrontPanel({ W, H, baseMaterial, panelMaterial, grooveMate
     deepMesh.receiveShadow = true;
     group.add(deepMesh);
 
-    // Level 3: Center raised panel
+    // --- START OF V-CARVE RESTORATION ---
+    // Level 3: Center raised panel with continuous V-carve slope
     const raisedHeight = roundoverDepth + deepDepth;
     const centerShape = new THREE.Shape();
     centerShape.moveTo(-centerPanelW/2, -centerPanelH/2);
@@ -218,21 +219,22 @@ export function createFrontPanel({ W, H, baseMaterial, panelMaterial, grooveMate
     centerShape.lineTo(-centerPanelW/2, -centerPanelH/2);
     
     const centerGeometry = new THREE.ExtrudeGeometry(centerShape, {
-      depth: raisedHeight,
-      bevelEnabled: true,
-      bevelThickness: 0.010,
-      bevelSize: 0.080,
-      bevelSegments: 1
+        depth: 0.001, // Minimal depth for the flat top
+        bevelEnabled: true,
+        bevelThickness: raisedHeight - 0.001, // Bevel makes up almost the entire height
+        bevelSize: 0.13, // This controls the slope
+        bevelSegments: 1
     });
     
     centerGeometry.translate(0, 0, -raisedHeight);
     fixUVMapping(centerGeometry, centerPanelW, centerPanelH, x, y, W, H);
     
     const centerMesh = new THREE.Mesh(centerGeometry, baseMaterial);
-    centerMesh.position.set(x, y, -roundoverDepth - deepDepth + raisedHeight);
+    centerMesh.position.set(x, y, 0); // Position the front of the geometry at z=0
     centerMesh.castShadow = true;
     centerMesh.receiveShadow = true;
     group.add(centerMesh);
+    // --- END OF V-CARVE RESTORATION ---
   });
   
   return group;

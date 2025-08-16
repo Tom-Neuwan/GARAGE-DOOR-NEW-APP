@@ -13,7 +13,7 @@ export function createBackPanel({ W, H, backMaterial }) {
   backShape.lineTo(-W/2, -H/2);
 
   // No holes in the back shape - completely flat
-  const backPanelThickness = 0.01;
+  const backPanelThickness = 0.015;
   const backGeometry = new THREE.ExtrudeGeometry(backShape, {
     depth: backPanelThickness,
     bevelEnabled: false
