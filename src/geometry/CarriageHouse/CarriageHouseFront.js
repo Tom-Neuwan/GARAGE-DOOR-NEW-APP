@@ -58,7 +58,57 @@ export function createCarriageHouseFront({ W, H, baseMaterial, panelMaterial, gr
     }
   }
 
-  const doorFrameGeometry = new THREE.ExtrudeGeometry(doorShape, { depth: SLAB_THICKNESS, bevelEnabled: false });
+  const doorFrameGeometry = new THREE.ExtrudeGeometry(doorShape, {
+    depth: SLAB_THICKNESS,
+    bevelEnabled: false,
+    UVGenerator: {
+      generateTopUV: function (geometry, vertices, indexA, indexB, indexC) {
+        const a_x = vertices[indexA * 3];
+        const a_y = vertices[indexA * 3 + 1];
+        const b_x = vertices[indexB * 3];
+        const b_y = vertices[indexB * 3 + 1];
+        const c_x = vertices[indexC * 3];
+        const c_y = vertices[indexC * 3 + 1];
+  
+        return [
+          new THREE.Vector2((a_x + W / 2) / W, (a_y + H / 2) / H),
+          new THREE.Vector2((b_x + W / 2) / W, (b_y + H / 2) / H),
+          new THREE.Vector2((c_x + W / 2) / W, (c_y + H / 2) / H),
+        ];
+      },
+      generateSideWallUV: function (geometry, vertices, indexA, indexB, indexC, indexD) {
+        const a_x = vertices[indexA * 3];
+        const a_y = vertices[indexA * 3 + 1];
+        const a_z = vertices[indexA * 3 + 2];
+        const b_x = vertices[indexB * 3];
+        const b_y = vertices[indexB * 3 + 1];
+        const b_z = vertices[indexB * 3 + 2];
+        const c_x = vertices[indexC * 3];
+        const c_y = vertices[indexC * 3 + 1];
+        const c_z = vertices[indexC * 3 + 2];
+        const d_x = vertices[indexD * 3];
+        const d_y = vertices[indexD * 3 + 1];
+        const d_z = vertices[indexD * 3 + 2];
+  
+        if (Math.abs(a_y - b_y) < Math.abs(a_x - b_x)) {
+          return [
+            new THREE.Vector2((a_x + W / 2) / W, a_z / SLAB_THICKNESS),
+            new THREE.Vector2((b_x + W / 2) / W, b_z / SLAB_THICKNESS),
+            new THREE.Vector2((c_x + W / 2) / W, c_z / SLAB_THICKNESS),
+            new THREE.Vector2((d_x + W / 2) / W, d_z / SLAB_THICKNESS),
+          ];
+        } else {
+          return [
+            new THREE.Vector2((a_y + H / 2) / H, a_z / SLAB_THICKNESS),
+            new THREE.Vector2((b_y + H / 2) / H, b_z / SLAB_THICKNESS),
+            new THREE.Vector2((c_y + H / 2) / H, c_z / SLAB_THICKNESS),
+            new THREE.Vector2((d_y + H / 2) / H, d_z / SLAB_THICKNESS),
+          ];
+        }
+      },
+    },
+  });
+  
   doorFrameGeometry.translate(0, 0, -SLAB_THICKNESS);
   const doorFrameMesh = new THREE.Mesh(doorFrameGeometry, baseMaterial);
   doorFrameMesh.castShadow = true;
