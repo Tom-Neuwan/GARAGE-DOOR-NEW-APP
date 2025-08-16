@@ -23,7 +23,7 @@ const fixUVMapping = (geometry, width, height, offsetX, offsetY, doorWidth, door
 export function createCarriageHouseFront({ W, H, baseMaterial, panelMaterial, grooveMaterial }) {
   const group = new THREE.Group();
 
-  // --- Base geometry is copied from your working FrontPanel.js ---
+  // --- Base geometry ---
   const SLAB_THICKNESS = 0.167;
   const doorShape = new THREE.Shape();
   doorShape.moveTo(-W / 2, -H / 2);
@@ -66,7 +66,7 @@ export function createCarriageHouseFront({ W, H, baseMaterial, panelMaterial, gr
   group.add(doorFrameMesh);
 
   panelPositions.forEach(({ x, y, w, h }) => {
-    // --- The complex, multi-part panel geometry ---
+    // --- Level 1: Roundover edge ---
     const roundoverRadius = 0.050;
     const roundoverDepth = 0.05;
     const level1InnerW = w - (roundoverRadius * 2);
@@ -85,7 +85,13 @@ export function createCarriageHouseFront({ W, H, baseMaterial, panelMaterial, gr
     roundoverHole.lineTo(-level1InnerW / 2, level1InnerH / 2);
     roundoverHole.lineTo(-level1InnerW / 2, -level1InnerH / 2);
     roundoverShape.holes.push(roundoverHole);
-    const roundoverGeometry = new THREE.ExtrudeGeometry(roundoverShape, { depth: roundoverDepth, bevelEnabled: true, bevelThickness: roundoverRadius * 0.5, bevelSize: roundoverRadius * 0.4, bevelSegments: 6 });
+    const roundoverGeometry = new THREE.ExtrudeGeometry(roundoverShape, { 
+      depth: roundoverDepth, 
+      bevelEnabled: true, 
+      bevelThickness: roundoverRadius * 0.5, 
+      bevelSize: roundoverRadius * 0.4, 
+      bevelSegments: 6 
+    });
     roundoverGeometry.translate(0, 0, -roundoverDepth);
     fixUVMapping(roundoverGeometry, w, h, x, y, W, H);
     const roundoverMesh = new THREE.Mesh(roundoverGeometry, panelMaterial);
@@ -93,6 +99,7 @@ export function createCarriageHouseFront({ W, H, baseMaterial, panelMaterial, gr
     roundoverMesh.receiveShadow = true;
     group.add(roundoverMesh);
 
+    // --- Level 2: Deep groove frame ---
     const deepWidth = 0.2;
     const deepDepth = 0.042;
     const centerPanelW = level1InnerW - (deepWidth * 2);
@@ -110,7 +117,13 @@ export function createCarriageHouseFront({ W, H, baseMaterial, panelMaterial, gr
     deepHole.lineTo(-centerPanelW / 2, centerPanelH / 2);
     deepHole.lineTo(-centerPanelW / 2, -centerPanelH / 2);
     deepShape.holes.push(deepHole);
-    const deepGeometry = new THREE.ExtrudeGeometry(deepShape, { depth: deepDepth, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.010, bevelSegments: 4 });
+    const deepGeometry = new THREE.ExtrudeGeometry(deepShape, { 
+      depth: deepDepth, 
+      bevelEnabled: true, 
+      bevelThickness: 0.012, 
+      bevelSize: 0.010, 
+      bevelSegments: 4 
+    });
     deepGeometry.translate(0, 0, -deepDepth);
     fixUVMapping(deepGeometry, level1InnerW, level1InnerH, x, y, W, H);
     const deepMesh = new THREE.Mesh(deepGeometry, grooveMaterial);
@@ -118,14 +131,45 @@ export function createCarriageHouseFront({ W, H, baseMaterial, panelMaterial, gr
     deepMesh.receiveShadow = true;
     group.add(deepMesh);
 
+    // --- Level 3: Center raised panel WITH CARVED GROOVES ---
     const raisedHeight = roundoverDepth + deepDepth;
+    
+    // Create the center panel shape
     const centerShape = new THREE.Shape();
     centerShape.moveTo(-centerPanelW / 2, -centerPanelH / 2);
     centerShape.lineTo(centerPanelW / 2, -centerPanelH / 2);
     centerShape.lineTo(centerPanelW / 2, centerPanelH / 2);
     centerShape.lineTo(-centerPanelW / 2, centerPanelH / 2);
     centerShape.lineTo(-centerPanelW / 2, -centerPanelH / 2);
-    const centerGeometry = new THREE.ExtrudeGeometry(centerShape, { depth: 0.001, bevelEnabled: true, bevelThickness: raisedHeight - 0.001, bevelSize: 0.13, bevelSegments: 1 });
+
+    // Add vertical groove holes to the center panel shape
+    const numGrooves = 11;
+    const grooveSpacing = centerPanelW / (numGrooves + 1);
+    const grooveWidth = 0.05; // Thin grooves
+    const grooveHeight = centerPanelH * 1; // Slightly shorter than panel
+    
+    for (let i = 1; i <= numGrooves; i++) {
+      const grooveX = -centerPanelW / 2 + (i * grooveSpacing);
+      
+      // Create a rectangular hole for each groove
+      const groovePath = new THREE.Path();
+      groovePath.moveTo(grooveX - grooveWidth / 2, -grooveHeight / 2);
+      groovePath.lineTo(grooveX + grooveWidth / 2, -grooveHeight / 2);
+      groovePath.lineTo(grooveX + grooveWidth / 2, grooveHeight / 2);
+      groovePath.lineTo(grooveX - grooveWidth / 2, grooveHeight / 2);
+      groovePath.lineTo(grooveX - grooveWidth / 2, -grooveHeight / 2);
+      
+      centerShape.holes.push(groovePath);
+    }
+    
+    // Extrude the center panel with the groove holes
+    const centerGeometry = new THREE.ExtrudeGeometry(centerShape, { 
+      depth: 0.001, 
+      bevelEnabled: true, 
+      bevelThickness: raisedHeight - 0.001, 
+      bevelSize: 0.13, 
+      bevelSegments: 1 
+    });
     centerGeometry.translate(0, 0, -raisedHeight);
     fixUVMapping(centerGeometry, centerPanelW, centerPanelH, x, y, W, H);
     const centerMesh = new THREE.Mesh(centerGeometry, baseMaterial);
@@ -134,26 +178,42 @@ export function createCarriageHouseFront({ W, H, baseMaterial, panelMaterial, gr
     centerMesh.receiveShadow = true;
     group.add(centerMesh);
 
-    // --- Create 11 shallow rectangular grooves that cut INTO the panel surface ---
-    const numGrooves = 11;
-    const grooveSpacing = centerPanelW / (numGrooves + 1);
-    const grooveWidth = 0.015;
-    const grooveHeight = centerPanelH * 0.95; // Make slightly shorter to fit within the panel
-    const grooveDepth = 0.01;                 // A very shallow cut (1% of depth)
-
-    const grooveGeometry = new THREE.BoxGeometry(grooveWidth, grooveHeight, grooveDepth);
-
+    // --- Add V-carved effect inside the grooves ---
+    // We'll create thin wedge shapes to simulate the V-carve profile inside each groove
+    const grooveDepth = 0.08; // How deep the V-carve goes
+    
     for (let i = 1; i <= numGrooves; i++) {
-      const grooveMesh = new THREE.Mesh(grooveGeometry, grooveMaterial);
-
       const grooveX = x - centerPanelW / 2 + (i * grooveSpacing);
       
-      // Position the groove to be half-way INSIDE the panel's front face (z=0)
-      const grooveZ = -grooveDepth / 2 + 0.0001; // Tiny offset to prevent visual glitches
-
-      grooveMesh.position.set(grooveX, y, grooveZ);
-      grooveMesh.receiveShadow = true;
-      group.add(grooveMesh);
+      // Create a V-shaped profile using a thin extruded shape with bevels
+      const vGrooveShape = new THREE.Shape();
+      const halfWidth = grooveWidth / 2;
+      const halfHeight = grooveHeight / 2;
+      
+      vGrooveShape.moveTo(-halfWidth * 0.8, -halfHeight);
+      vGrooveShape.lineTo(halfWidth * 0.8, -halfHeight);
+      vGrooveShape.lineTo(halfWidth * 0.8, halfHeight);
+      vGrooveShape.lineTo(-halfWidth * 0.8, halfHeight);
+      vGrooveShape.lineTo(-halfWidth * 0.8, -halfHeight);
+      
+      const vGrooveGeometry = new THREE.ExtrudeGeometry(vGrooveShape, {
+        depth: 0.001,
+        bevelEnabled: true,
+        bevelThickness: grooveDepth,
+        bevelSize: halfWidth * 0.5,
+        bevelSegments: 1,
+        bevelOffset: -halfWidth * 0.3
+      });
+      
+      // Position the V-groove to sit inside the carved groove
+      vGrooveGeometry.translate(0, 0, -grooveDepth);
+      fixUVMapping(vGrooveGeometry, grooveWidth, grooveHeight, grooveX, y, W, H);
+      
+      const vGrooveMesh = new THREE.Mesh(vGrooveGeometry, grooveMaterial);
+      vGrooveMesh.position.set(grooveX, y, -raisedHeight + grooveDepth);
+      vGrooveMesh.receiveShadow = true;
+      
+      group.add(vGrooveMesh);
     }
   });
   
