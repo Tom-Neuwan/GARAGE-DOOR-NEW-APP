@@ -1,7 +1,7 @@
 // src/geometry/RaisedPanelDoor.js
 import * as THREE from 'three';
 import { createFrontPanel } from './FrontPanel.js';
-import { createBackPanel } from './BackPanel.js';
+import { createBackPanel } from '../BackPanel.js';
 
 export function buildRaisedPanelDoor({ W, H, baseMaterial, panelMaterial, grooveMaterial, backMaterial }) {
   const group = new THREE.Group();

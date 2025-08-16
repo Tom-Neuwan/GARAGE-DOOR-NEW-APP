@@ -2,8 +2,8 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import SimpleOrbitControls from '../controls/SimpleOrbitControls';
-import { buildRaisedPanelDoor } from '../geometry/RaisedPanelDoor.js';
-
+import { buildRaisedPanelDoor } from '../geometry/RaisedPanel/RaisedPanelDoor.js';
+import { buildCarriageHouseDoor } from '../geometry/CarriageHouse/CarriageHouseDoor.js';
 /* -------------------------- tunables (scene units ~ ft) -------------------------- */
 const SLAB_THICKNESS = 0.167;        // 2" door thickness in feet
 
@@ -331,7 +331,8 @@ export default function ThreeVisualization({ config, is3D }) {
     const { width, height, style, colorIndex } = config || {};
     const W = (width || 192) / 12;
     const H = (height || 84) / 12;
-    
+    console.log('Building door with style:', style); // <-- ADD THIS LINE to see what the style is
+
     const colors = [
       '#F5F5F5', '#F0EAD6', '#D8CDBA', '#8B4513', '#63473d', '#36454F', '#222222'
     ];
@@ -386,17 +387,18 @@ export default function ThreeVisualization({ config, is3D }) {
       metalness: 0.05,
     });
 
-    // For raised panels, use identical texture settings but vary only roughness slightly
+    // Declare variables that will hold style-specific materials
     let grooveMaterial, panelMaterial;
     
-    if (style === 'Raised Panel') {
+    // Create special materials for styles that need them
+    if (style === 'Raised Panel' || style === 'Carriage House') {
       grooveMaterial = new THREE.MeshStandardMaterial({
         color: useTextures ? 0xffffff : new THREE.Color(selectedColorValue).multiplyScalar(0.6),
         map: useTextures && activeTextures ? activeTextures.color : null,
         normalMap: useTextures && activeTextures ? activeTextures.normal : null,
         roughnessMap: useTextures && activeTextures ? activeTextures.rough : null,
         aoMap: useTextures && activeTextures ? activeTextures.ao : null,
-        roughness: useTextures ? 0.95 : 0.9, // Very subtle difference
+        roughness: useTextures ? 0.95 : 0.9,
         metalness: 0.05,
       });
 
@@ -406,10 +408,11 @@ export default function ThreeVisualization({ config, is3D }) {
         normalMap: useTextures && activeTextures ? activeTextures.normal : null,
         roughnessMap: useTextures && activeTextures ? activeTextures.rough : null,
         aoMap: useTextures && activeTextures ? activeTextures.ao : null,
-        roughness: useTextures ? 0.92 : 0.85, // Very subtle difference
+        roughness: useTextures ? 0.92 : 0.85,
         metalness: 0.05,
       });
     } else {
+      // For simple styles, just use the base material
       grooveMaterial = baseMaterial;
       panelMaterial = baseMaterial;
     }
@@ -418,23 +421,43 @@ export default function ThreeVisualization({ config, is3D }) {
       color: 0xf8f8f8,
     });
 
-    if (style === 'Raised Panel') {
-      const door = buildRaisedPanelDoor({
-        W, H,
-        baseMaterial,
-        grooveMaterial,
-        panelMaterial,
-        backMaterial,
-      });
-      doorGroup.add(door);
-    } else {
-      const simpleGeometry = new THREE.BoxGeometry(W, H, SLAB_THICKNESS);
-      const simpleMesh = new THREE.Mesh(simpleGeometry, baseMaterial);
-      simpleMesh.castShadow = true;
-      simpleMesh.receiveShadow = true;
-      doorGroup.add(simpleMesh);
-    }
+    // Define a trim material for the carriage house style grids
+    const trimMaterial = new THREE.MeshStandardMaterial({
+      color: useTextures ? 0xcccccc : new THREE.Color(selectedColorValue).multiplyScalar(0.8),
+      map: useTextures && activeTextures ? activeTextures.color : null,
+      normalMap: useTextures && activeTextures ? activeTextures.normal : null,
+      roughness: useTextures ? 0.95 : 0.85,
+      metalness: 0.05,
+    });
 
+
+    // --- YOUR GEOMETRY BUILDING BLOCK SHOULD ALREADY LOOK LIKE THIS ---
+    if (style === 'Raised Panel') {
+        const door = buildRaisedPanelDoor({
+            W, H,
+            baseMaterial,
+            grooveMaterial,
+            panelMaterial,
+            backMaterial,
+        });
+        doorGroup.add(door);
+    } else if (style === 'Carriage House') {
+        const door = buildCarriageHouseDoor({
+            W, H,
+            baseMaterial,
+            panelMaterial,
+            grooveMaterial,
+            trimMaterial,
+            backMaterial,
+        });
+        doorGroup.add(door);
+    } else { 
+        const simpleGeometry = new THREE.BoxGeometry(W, H, SLAB_THICKNESS);
+        const simpleMesh = new THREE.Mesh(simpleGeometry, baseMaterial);
+        simpleMesh.castShadow = true;
+        simpleMesh.receiveShadow = true;
+        doorGroup.add(simpleMesh);
+    }
     const box = new THREE.Box3().setFromObject(doorGroup);
     const center = box.getCenter(new THREE.Vector3());
     doorGroup.position.sub(center);
