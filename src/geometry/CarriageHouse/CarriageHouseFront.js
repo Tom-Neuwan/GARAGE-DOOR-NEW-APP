@@ -195,7 +195,7 @@ export function createCarriageHouseFront({ W, H, baseMaterial, panelMaterial, gr
     // Add vertical groove holes to the center panel shape
     const numGrooves = 11;
     const grooveSpacing = centerPanelW / (numGrooves + 1);
-    const grooveWidth = 0.05; // Thin grooves
+    const grooveWidth = 0.08; // Thin grooves
     const grooveHeight = centerPanelH * 1; // Slightly shorter than panel
     
     for (let i = 1; i <= numGrooves; i++) {
