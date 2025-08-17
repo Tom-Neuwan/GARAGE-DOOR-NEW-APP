@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createCarriageHouseFront } from './CarriageHouseFront.js';
 import { createBackPanel } from '../BackPanel.js';
 
-export function buildCarriageHouseDoor({ W, H, baseMaterial, panelMaterial, grooveMaterial, trimMaterial, backMaterial }) {
+export function buildCarriageHouseDoor({ W, H, baseMaterial, panelMaterial, grooveMaterial, trimMaterial, backMaterial, vGrooveMaterial }) {
   const group = new THREE.Group();
 
   const SLAB_THICKNESS = 0.167;

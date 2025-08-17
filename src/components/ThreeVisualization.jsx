@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import SimpleOrbitControls from '../controls/SimpleOrbitControls';
 import { buildRaisedPanelDoor } from '../geometry/RaisedPanel/RaisedPanelDoor.js';
 import { buildCarriageHouseDoor } from '../geometry/CarriageHouse/CarriageHouseDoor.js';
+import { buildFlushDoor } from '../geometry/FlushPanel/FlushDoor.js'; 
 /* -------------------------- tunables (scene units ~ ft) -------------------------- */
 const SLAB_THICKNESS = 0.167;        // 2" door thickness in feet
 
@@ -135,8 +136,6 @@ export default function ThreeVisualization({ config, is3D }) {
   useEffect(() => {
     if (!texturesRef.current) {
       const L = new THREE.TextureLoader();
-      
-      // Function to load texture with error handling
       const loadTextureWithFallback = (url, fallbackTexture) => {
         return new Promise((resolve) => {
           L.load(
@@ -147,7 +146,7 @@ export default function ThreeVisualization({ config, is3D }) {
               console.log(`Successfully loaded texture: ${url}`);
               resolve(texture);
             },
-            undefined, // onProgress
+            undefined,
             (error) => {
               console.warn(`Failed to load texture: ${url}, using fallback`);
               resolve(fallbackTexture);
@@ -156,11 +155,9 @@ export default function ThreeVisualization({ config, is3D }) {
         });
       };
 
-      // Create fallback textures
       const fallbackColor = createWoodTexture('#8B4513');
       const fallbackNormal = createNormalMap();
 
-      // Load textures with correct nested folder paths
       Promise.all([
         loadTextureWithFallback('/textures/Wood059_2K-JPG/Wood059_2K-JPG_Color.jpg', fallbackColor),
         loadTextureWithFallback('/textures/Wood059_2K-JPG/Wood059_2K-JPG_NormalGL.jpg', fallbackNormal),
@@ -170,31 +167,29 @@ export default function ThreeVisualization({ config, is3D }) {
         loadTextureWithFallback('/textures/Wood060_2K-JPG/Wood060_2K-JPG_NormalGL.jpg', fallbackNormal),
         loadTextureWithFallback('/textures/Wood060_2K-JPG/Wood060_2K-JPG_Roughness.jpg', null),
         loadTextureWithFallback('/textures/Wood060_2K-JPG/Wood060_2K-JPG_AmbientOcclusion.jpg', null),
+        loadTextureWithFallback('/textures/Steel Door/baseColor_2k.jpg', fallbackColor),
+        loadTextureWithFallback('/textures/Steel Door/normal_2k.jpg', fallbackNormal),
+        loadTextureWithFallback('/textures/Steel Door/roughness_1k_corrected_gray.jpg', null),
+        loadTextureWithFallback('/textures/Steel Door/ao_2k.jpg', null),
       ]).then(([
         wood059Color, wood059Normal, wood059Rough, wood059AO,
-        wood060Color, wood060Normal, wood060Rough, wood060AO
+        wood060Color, wood060Normal, wood060Rough, wood060AO,
+        // ✅ THIS WAS THE MISSING PART: RECEIVING THE NEW TEXTURES
+        steelDoorColor, steelDoorNormal, steelDoorRough, steelDoorAO 
       ]) => {
+        wood059Color.encoding = THREE.sRGBEncoding;
+        wood060Color.encoding = THREE.sRGBEncoding;
+        steelDoorColor.encoding = THREE.sRGBEncoding;
+
         texturesRef.current = {
-          wood059: {
-            color: wood059Color,
-            normal: wood059Normal,
-            rough: wood059Rough,
-            ao: wood059AO,
-          },
-          wood060: {
-            color: wood060Color,
-            normal: wood060Normal,
-            rough: wood060Rough,
-            ao: wood060AO,
-          }
+          wood059: { color: wood059Color, normal: wood059Normal, rough: wood059Rough, ao: wood059AO },
+          wood060: { color: wood060Color, normal: wood060Normal, rough: wood060Rough, ao: wood060AO },
+          // ✅ THIS WAS THE MISSING PART: SAVING THE NEW TEXTURES
+          steelDoor: { color: steelDoorColor, normal: steelDoorNormal, ao: steelDoorAO }, 
         };
         
-        // Trigger a re-render when textures are loaded
-        if (doorGroupRef.current) {
-          // Force update by clearing and rebuilding the door
-          const event = new CustomEvent('texturesLoaded');
-          window.dispatchEvent(event);
-        }
+        const event = new CustomEvent('texturesLoaded');
+        window.dispatchEvent(event);
       });
     }
   }, []);
@@ -216,6 +211,8 @@ export default function ThreeVisualization({ config, is3D }) {
     renderer.setSize(el.clientWidth, el.clientHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.outputEncoding = THREE.sRGBEncoding;
     el.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -310,11 +307,13 @@ export default function ThreeVisualization({ config, is3D }) {
           c.geometry?.dispose();
           if (Array.isArray(c.material)) {
             c.material.forEach(m => {
+              if (m) { 
               m.map?.dispose();
               m.normalMap?.dispose();
               m.roughnessMap?.dispose();
               m.aoMap?.dispose();
               m.dispose();
+              }
             });
           } else {
             c.material.map?.dispose();
@@ -339,7 +338,8 @@ export default function ThreeVisualization({ config, is3D }) {
     const selectedColorValue = colors[colorIndex] || colors[3];
     const isWoodGrain = colorIndex === 3;
     const isDarkWoodGrain = colorIndex === 4;
-    const useTextures = isWoodGrain || isDarkWoodGrain;
+    const isSteelDoor = colorIndex === 5;
+    const useTextures = isWoodGrain || isDarkWoodGrain || isSteelDoor;
 
     let activeTextures = null;
     if (texturesRef.current) {
@@ -347,6 +347,8 @@ export default function ThreeVisualization({ config, is3D }) {
         activeTextures = texturesRef.current.wood059;
       } else if (isDarkWoodGrain) {
         activeTextures = texturesRef.current.wood060;
+      } else if (isSteelDoor) {
+        activeTextures = texturesRef.current.steelDoor;
       }
     }
 
@@ -364,7 +366,7 @@ export default function ThreeVisualization({ config, is3D }) {
 
     // Texture scaling - use consistent scaling for all parts
     if (useTextures && activeTextures) {
-      const textureScaleFactor = 3; // Slightly larger scale for better grain visibility
+ const textureScaleFactor = isSteelDoor ? 1 : 1.5; // 1.5 for steel, 3 for wood
       const repX = W / textureScaleFactor;
       const repY = H / textureScaleFactor;
 
@@ -378,38 +380,43 @@ export default function ThreeVisualization({ config, is3D }) {
 
     // Create materials - ALL use identical texture settings for consistency
     const baseMaterial = new THREE.MeshStandardMaterial({
-      color: useTextures ? 0xffffff : new THREE.Color(selectedColorValue),
+      color: isSteelDoor ? new THREE.Color(selectedColorValue) : (useTextures ? 0xffffff : new THREE.Color(selectedColorValue)),
       map: useTextures && activeTextures ? activeTextures.color : null,
       normalMap: useTextures && activeTextures ? activeTextures.normal : null,
+      // ✅ MAKE SURE YOUR ROUGHNESS MAP IS BEING USED
       roughnessMap: useTextures && activeTextures ? activeTextures.rough : null,
       aoMap: useTextures && activeTextures ? activeTextures.ao : null,
-      roughness: useTextures ? 0.9 : 0.8,
-      metalness: 0.05,
+      
+      // ✅ SET ROUGHNESS TO 1 TO LET THE MAP DO THE WORK
+      roughness: 0.8, 
+      metalness: isSteelDoor ? 0.4 : 0.05,
+      normalScale: new THREE.Vector2(1.5, -1.5)
     });
-
-    // Declare variables that will hold style-specific materials
-    let grooveMaterial, panelMaterial;
+    // Declare variables txhat will hold style-specific materials
+    let grooveMaterial, panelMaterial, vGrooveMaterial;
     
     // Create special materials for styles that need them
     if (style === 'Raised Panel' || style === 'Carriage House') {
       grooveMaterial = new THREE.MeshStandardMaterial({
-        color: useTextures ? 0xffffff : new THREE.Color(selectedColorValue).multiplyScalar(0.6),
-        map: useTextures && activeTextures ? activeTextures.color : null,
-        normalMap: useTextures && activeTextures ? activeTextures.normal : null,
-        roughnessMap: useTextures && activeTextures ? activeTextures.rough : null,
-        aoMap: useTextures && activeTextures ? activeTextures.ao : null,
-        roughness: useTextures ? 0.95 : 0.9,
-        metalness: 0.05,
+        // Just a simple, darker version of the main color
+        color: new THREE.Color(selectedColorValue).multiplyScalar(0.5),
+        // NO bumpy texture and NOT shiny
+        normalMap: null,
+        roughness: 0.95,
       });
-
       panelMaterial = new THREE.MeshStandardMaterial({
         color: useTextures ? 0xffffff : new THREE.Color(selectedColorValue).multiplyScalar(0.7),
         map: useTextures && activeTextures ? activeTextures.color : null,
         normalMap: useTextures && activeTextures ? activeTextures.normal : null,
         roughnessMap: useTextures && activeTextures ? activeTextures.rough : null,
         aoMap: useTextures && activeTextures ? activeTextures.ao : null,
-        roughness: useTextures ? 0.92 : 0.85,
-        metalness: 0.05,
+        roughness: isSteelDoor ? 0.6 : (useTextures ? 0.92 : 0.85),
+        metalness: isSteelDoor ? 0.4 : 0.05,
+        normalScale: new THREE.Vector2(1.5, 1.5)
+      });
+       vGrooveMaterial = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(selectedColorValue).multiplyScalar(0.4),
+        roughness: 0.9,
       });
     } else {
       // For simple styles, just use the base material
@@ -439,6 +446,7 @@ export default function ThreeVisualization({ config, is3D }) {
             grooveMaterial,
             panelMaterial,
             backMaterial,
+            vGrooveMaterial,
         });
         doorGroup.add(door);
     } else if (style === 'Carriage House') {
@@ -449,9 +457,21 @@ export default function ThreeVisualization({ config, is3D }) {
             grooveMaterial,
             trimMaterial,
             backMaterial,
+            vGrooveMaterial,
         });
         doorGroup.add(door);
-    } else { 
+    
+    } 
+    else if (style === 'Flush' || style === 'Modern Steel') { // ✅ Add this condition
+      const door = buildFlushDoor({
+          W, H,
+          baseMaterial,
+          backMaterial,
+          totalDoorH: H,
+          
+      });
+      doorGroup.add(door);
+    }else { 
         const simpleGeometry = new THREE.BoxGeometry(W, H, SLAB_THICKNESS);
         const simpleMesh = new THREE.Mesh(simpleGeometry, baseMaterial);
         simpleMesh.castShadow = true;
@@ -486,7 +506,8 @@ export default function ThreeVisualization({ config, is3D }) {
   return (
     <div className="w-full h-full relative">
       <div ref={mountRef} className="w-full h-full" />
-      <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
+      <div className="absolute top-4 right-4 flex flex-
+       col gap-2 z-10">
         <button
           onClick={() => handleZoom(5)}
           className="w-10 h-10 bg-white/70 rounded-full text-2xl font-bold flex items-center justify-center shadow-md hover:bg-white"

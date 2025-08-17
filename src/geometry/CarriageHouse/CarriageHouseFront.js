@@ -1,3 +1,5 @@
+//CarriageHouseFront.js
+
 import * as THREE from 'three';
 
 const fixUVMapping = (geometry, width, height, offsetX, offsetY, doorWidth, doorHeight) => {
@@ -21,7 +23,7 @@ const fixUVMapping = (geometry, width, height, offsetX, offsetY, doorWidth, door
 };
 
 // This function now builds a single section
-export function createCarriageHouseFront({ W, sectionHeight, baseMaterial, panelMaterial, grooveMaterial, totalDoorH, offsetY }) {
+export function createCarriageHouseFront({ W, sectionHeight, baseMaterial, panelMaterial, grooveMaterial,  totalDoorH, offsetY }) {
   const group = new THREE.Group();
 
   const SLAB_THICKNESS = 0.167;
@@ -120,7 +122,7 @@ export function createCarriageHouseFront({ W, sectionHeight, baseMaterial, panel
     });
     roundoverGeometry.translate(0, 0, -roundoverDepth);
     fixUVMapping(roundoverGeometry, w, h, x, panelWorldY, W, totalDoorH);
-    const roundoverMesh = new THREE.Mesh(roundoverGeometry, panelMaterial);
+    const roundoverMesh = new THREE.Mesh(roundoverGeometry, baseMaterial);
     roundoverMesh.position.set(x, y, -roundoverDepth);
     roundoverMesh.receiveShadow = true;
     group.add(roundoverMesh);
@@ -152,7 +154,7 @@ export function createCarriageHouseFront({ W, sectionHeight, baseMaterial, panel
     });
     deepGeometry.translate(0, 0, -deepDepth);
     fixUVMapping(deepGeometry, level1InnerW, level1InnerH, x, panelWorldY, W, totalDoorH);
-    const deepMesh = new THREE.Mesh(deepGeometry, grooveMaterial);
+    const deepMesh = new THREE.Mesh(deepGeometry, baseMaterial);
     deepMesh.position.set(x, y, -roundoverDepth - deepDepth);
     deepMesh.receiveShadow = true;
     group.add(deepMesh);
@@ -223,7 +225,7 @@ export function createCarriageHouseFront({ W, sectionHeight, baseMaterial, panel
       vGrooveGeometry.translate(0, 0, -grooveDepth);
       fixUVMapping(vGrooveGeometry, grooveWidth, grooveHeight, grooveX, panelWorldY, W, totalDoorH);
       
-      const vGrooveMesh = new THREE.Mesh(vGrooveGeometry, grooveMaterial);
+      const vGrooveMesh = new THREE.Mesh(vGrooveGeometry, baseMaterial);
       vGrooveMesh.position.set(grooveX, y, -raisedHeight + grooveDepth);
       vGrooveMesh.receiveShadow = true;
       group.add(vGrooveMesh);

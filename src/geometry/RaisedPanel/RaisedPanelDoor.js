@@ -1,8 +1,10 @@
+//raisedPanelDoor.js
+
 import * as THREE from 'three';
 import { createFrontPanel } from './FrontPanel.js';
 import { createBackPanel } from '../BackPanel.js';
 
-export function buildRaisedPanelDoor({ W, H, baseMaterial, panelMaterial, grooveMaterial, backMaterial }) {
+export function buildRaisedPanelDoor({ W, H, baseMaterial, panelMaterial, grooveMaterial, backMaterial, vGrooveMaterial }) {
   const group = new THREE.Group();
 
   const SLAB_THICKNESS = 0.167;

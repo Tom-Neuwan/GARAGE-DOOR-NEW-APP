@@ -1,3 +1,4 @@
+//frontPanel.js
 import * as THREE from 'three';
 
 // Helper function to fix UV mapping for extruded geometries to match door coordinates
@@ -29,7 +30,7 @@ const fixUVMapping = (geometry, width, height, offsetX, offsetY, doorWidth, door
   geometry.computeBoundingSphere();
 };
 
-export function createFrontPanel({ W, sectionHeight, baseMaterial, panelMaterial, grooveMaterial, totalDoorH, offsetY }) {
+export function createFrontPanel({ W, sectionHeight, baseMaterial, panelMaterial, grooveMaterial, vGrooveMaterial, totalDoorH, offsetY }) {
   const group = new THREE.Group();
 
   const SLAB_THICKNESS = 0.167;
@@ -133,7 +134,7 @@ export function createFrontPanel({ W, sectionHeight, baseMaterial, panelMaterial
     roundoverGeometry.translate(0, 0, -roundoverDepth);
     fixUVMapping(roundoverGeometry, w, h, x, panelWorldY, W, totalDoorH);
     
-    const roundoverMesh = new THREE.Mesh(roundoverGeometry, panelMaterial);
+    const roundoverMesh = new THREE.Mesh(roundoverGeometry, baseMaterial);
     roundoverMesh.position.set(x, y, -roundoverDepth);
     roundoverMesh.receiveShadow = true;
     group.add(roundoverMesh);
@@ -170,7 +171,7 @@ export function createFrontPanel({ W, sectionHeight, baseMaterial, panelMaterial
     deepGeometry.translate(0, 0, -deepDepth);
     fixUVMapping(deepGeometry, level1InnerW, level1InnerH, x, panelWorldY, W, totalDoorH);
     
-    const deepMesh = new THREE.Mesh(deepGeometry, grooveMaterial);
+    const deepMesh = new THREE.Mesh(deepGeometry, baseMaterial);
     deepMesh.position.set(x, y, -roundoverDepth - deepDepth);
     deepMesh.receiveShadow = true;
     group.add(deepMesh);
