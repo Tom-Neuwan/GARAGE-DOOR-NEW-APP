@@ -366,7 +366,7 @@ export default function ThreeVisualization({ config, is3D }) {
 
     // Texture scaling - use consistent scaling for all parts
     if (useTextures && activeTextures) {
- const textureScaleFactor = isSteelDoor ? 1 : 1.5; // 1.5 for steel, 3 for wood
+ const textureScaleFactor = isSteelDoor ? 1.01 : 1.5; // 1.5 for steel, 3 for wood
       const repX = W / textureScaleFactor;
       const repY = H / textureScaleFactor;
 
@@ -389,8 +389,8 @@ export default function ThreeVisualization({ config, is3D }) {
       
       // ✅ SET ROUGHNESS TO 1 TO LET THE MAP DO THE WORK
       roughness: 0.8, 
-      metalness: isSteelDoor ? 0.4 : 0.05,
-      normalScale: new THREE.Vector2(1.5, -1.5)
+      metalness: isSteelDoor ? 0.2 : 0.05,
+      normalScale: new THREE.Vector2(0.7, -1)
     });
     // Declare variables txhat will hold style-specific materials
     let grooveMaterial, panelMaterial, vGrooveMaterial;
@@ -405,7 +405,7 @@ export default function ThreeVisualization({ config, is3D }) {
         roughness: 0.95,
       });
       panelMaterial = new THREE.MeshStandardMaterial({
-        color: useTextures ? 0xffffff : new THREE.Color(selectedColorValue).multiplyScalar(0.7),
+        color: isSteelDoor ? new THREE.Color(selectedColorValue).multiplyScalar(0.8) : (useTextures ? 0xffffff : new THREE.Color(selectedColorValue).multiplyScalar(0.7)),
         map: useTextures && activeTextures ? activeTextures.color : null,
         normalMap: useTextures && activeTextures ? activeTextures.normal : null,
         roughnessMap: useTextures && activeTextures ? activeTextures.rough : null,
